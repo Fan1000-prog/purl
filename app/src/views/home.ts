@@ -9,6 +9,7 @@ import type { EngineState, HistoryEntry } from "../types";
 import { onViewShow, prettyHotkey, switchView, type TranscriptPayload } from "../main";
 import { mountModelDownload, type ModelDownload } from "../components/model-download";
 import { confirmButton } from "../components/confirm-button";
+import { onRadio, setRadio } from "../components/radio-group";
 import { SPEECH_MODEL, watchSpeechEngine } from "../engine";
 import { getStatus } from "../status";
 import { privacySettingsUrl } from "../platform";
@@ -113,10 +114,9 @@ function renderLast() {
   $("last-text").hidden = !has;
   $("last-meta").hidden = !has;
   $("last-empty").hidden = has;
-  document.querySelectorAll<HTMLButtonElement>("#view-home .segmented button").forEach((b) => {
-    b.setAttribute("aria-checked", String((b.dataset.show === "raw") === showRaw));
-    b.disabled = !has;
-  });
+  const toggle = $("view-home").querySelector<HTMLElement>(".segmented")!;
+  setRadio(toggle, (b) => (b.dataset.show === "raw") === showRaw);
+  toggle.querySelectorAll<HTMLButtonElement>("button").forEach((b) => (b.disabled = !has));
   if (!last) return;
   $("last-text").textContent = (showRaw ? last.raw : last.cleaned) || "—";
   const meta = $("last-meta");
@@ -205,11 +205,9 @@ function refreshAll() {
 export function initHome() {
   $("toggle-btn").addEventListener("click", () => void invoke("toggle_recording"));
 
-  document.querySelectorAll<HTMLButtonElement>("#view-home .segmented button").forEach((b) => {
-    b.addEventListener("click", () => {
-      showRaw = b.dataset.show === "raw";
-      renderLast();
-    });
+  onRadio($("view-home").querySelector<HTMLElement>(".segmented")!, (b) => {
+    showRaw = b.dataset.show === "raw";
+    renderLast();
   });
 
   confirmButton($("clear-history-btn"), "Delete all history? It only lives on this computer.", () => {

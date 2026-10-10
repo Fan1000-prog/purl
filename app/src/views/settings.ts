@@ -8,6 +8,7 @@ import { createHotkeyRecorder } from "./hotkey-recorder";
 import { mountModelDownload, formatBytes, type ModelDownload } from "../components/model-download";
 import { confirmButton } from "../components/confirm-button";
 import { getStatus } from "../status";
+import { onRadio, setRadio } from "../components/radio-group";
 import type { CleanupMode, ModelView } from "../types";
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
@@ -40,15 +41,11 @@ async function save(patch: Partial<Settings>): Promise<boolean> {
 }
 
 function setSegmented(group: HTMLElement, value: string) {
-  group.querySelectorAll<HTMLButtonElement>("button").forEach((b) => {
-    b.setAttribute("aria-checked", String(b.dataset.value === value));
-  });
+  setRadio(group, (b) => b.dataset.value === value);
 }
 
 function onSegmented(group: HTMLElement, handler: (value: string) => void) {
-  group.querySelectorAll<HTMLButtonElement>("button").forEach((b) => {
-    b.addEventListener("click", () => handler(b.dataset.value!));
-  });
+  onRadio(group, (b) => handler(b.dataset.value!));
 }
 
 // ---------- cleanup ----------
@@ -86,7 +83,10 @@ async function chooseCleanup(mode: CleanupMode) {
   if (mode === "smart") {
     mountSmartDownload(s.smart_model);
     if (!(await smartModelReady(s.smart_model))) {
-      renderCleanup("smart", true);
+      // Parked: the help promises Fast until the download finishes, so the
+      // backend must run Fast meanwhile (it may have been Off).
+      if (s.cleanup_mode === "fast" || (await save({ cleanup_mode: "fast" }))) renderCleanup("smart", true);
+      else renderCleanup(s.cleanup_mode);
       return;
     }
   }

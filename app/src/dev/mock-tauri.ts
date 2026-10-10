@@ -92,7 +92,7 @@ function install() {
   const settings: Record<string, unknown> = {
     hotkey: "CmdOrCtrl+Shift+Space",
     inject_mode: "paste",
-    cleanup_mode: "fast",
+    cleanup_mode: q.get("cleanup") ?? "fast",
     smart_model: "qwen3.5-2b",
     structure_mode: "none",
     command_detection: true,

@@ -118,10 +118,13 @@ test("Dictionary: add and remove keep the rest of the file, comments included", 
 });
 
 test("Settings: choosing Smart without a model downloads it, then turns Smart on", async ({ page }) => {
-  await open(page, "&data=demo");
+  await open(page, "&data=demo&cleanup=off");
   await go(page, "settings");
+  await expect(page.locator('#cleanup-mode button[data-value="off"]')).toHaveAttribute("aria-checked", "true");
   await page.locator('#cleanup-mode button[data-value="smart"]').click();
   await expect(page.locator("#cleanup-help")).toContainText("Smart turns on when the download finishes");
+  // The help says Fast is used meanwhile, so the backend must be on Fast, not Off.
+  await expect.poll(async () => (await calls(page, "save_settings")).at(-1)?.newSettings.cleanup_mode).toBe("fast");
   const card = page.locator("#smart-download .model-card");
   await expect(card).toContainText("Smart cleanup");
   await expect(card).toContainText("1.4 GB");
@@ -199,3 +202,39 @@ test("the what's-new card owes the 90-second disclosure on macOS only", async ({
   await open(page, "&models=ready&platform=windows&version=1.0.0");
   await expect(page.locator("#field-notice")).toBeHidden();
 });
+
+test("radio groups: one Tab stop each, arrow keys move focus and select, wrapping", async ({ page }) => {
+  await open(page, "&data=demo&models=ready");
+  const raw = page.getByRole("radio", { name: "Raw" });
+  const cleaned = page.getByRole("radio", { name: "Cleaned" });
+  await expect(cleaned).toHaveAttribute("tabindex", "0");
+  await expect(raw).toHaveAttribute("tabindex", "-1");
+  await cleaned.focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(raw).toBeFocused();
+  await expect(raw).toHaveAttribute("aria-checked", "true");
+  await expect(page.locator("#last-text")).toHaveText("hey sam thanks for the notes ill send the deck by friday");
+  await page.keyboard.press("ArrowRight"); // wraps to the first
+  await expect(cleaned).toBeFocused();
+  await expect(cleaned).toHaveAttribute("aria-checked", "true");
+
+  await go(page, "settings");
+  const mode = (v: string) => page.locator(`#cleanup-mode button[data-value="${v}"]`);
+  await expect(mode("fast")).toHaveAttribute("tabindex", "0");
+  await expect(mode("off")).toHaveAttribute("tabindex", "-1");
+  await mode("fast").focus();
+  await page.keyboard.press("ArrowRight");
+  await expect(mode("smart")).toBeFocused();
+  await expect(mode("smart")).toHaveAttribute("aria-checked", "true");
+  await expect(mode("smart")).toHaveAttribute("tabindex", "0");
+  await page.keyboard.press("ArrowDown"); // wraps to Off
+  await expect(mode("off")).toBeFocused();
+  await expect(mode("off")).toHaveAttribute("aria-checked", "true");
+  await page.keyboard.press("ArrowUp"); // wraps back to Smart
+  await expect(mode("smart")).toBeFocused();
+  await page.keyboard.press("ArrowLeft");
+  await expect(mode("fast")).toBeFocused();
+  await expect(mode("fast")).toHaveAttribute("aria-checked", "true");
+  await expect.poll(async () => (await calls(page, "save_settings")).at(-1)?.newSettings.cleanup_mode).toBe("fast");
+});
+
