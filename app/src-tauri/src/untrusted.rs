@@ -164,6 +164,17 @@ pub fn find_closing_tag(s: &str, name: &str) -> Option<(usize, usize)> {
         .find_map(|(i, _)| leading_tag_len(&s[i..], name, true).map(|len| (i, i + len)))
 }
 
+/// `text` without a leading `<name>…</name>` block (a model's thinking).
+/// `None` when the block never closes: the answer never started.
+pub fn strip_leading_block<'a>(text: &'a str, name: &str) -> Option<&'a str> {
+    let t = text.trim_start();
+    let Some(open) = leading_tag_len(t, name, false) else {
+        return Some(t);
+    };
+    let (_, end) = find_closing_tag(&t[open..], name)?;
+    Some(&t[open + end..])
+}
+
 fn is_exactly_tag(s: &str, name: &str, closing: bool) -> bool {
     let n = normalize(s);
     matches!(find_tags(&n, name).as_slice(), [t] if t.start == 0 && t.end == n.len() && t.closing == closing)

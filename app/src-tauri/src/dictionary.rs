@@ -55,8 +55,6 @@ impl Dictionary {
     }
 
     /// Newline list with expansions, for the LLM cleanup system prompt.
-    // Smart cleanup (plan Task 6) is the caller; unused until then.
-    #[allow(dead_code)]
     pub fn llm_terms(&self) -> String {
         self.entries
             .iter()
@@ -70,7 +68,6 @@ impl Dictionary {
 
     /// A copy with extra terms **prepended**, skipping ones already present.
     /// Used to add learned corrections to the Smart cleanup prompt.
-    #[allow(dead_code)]
     pub fn with_extra_terms(&self, terms: &[String]) -> Dictionary {
         let mut entries: Vec<Entry> = Vec::with_capacity(self.entries.len() + terms.len());
         for t in terms {

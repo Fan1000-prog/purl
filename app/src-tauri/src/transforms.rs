@@ -3,14 +3,17 @@
 //! transform is *supposed* to rephrase — no word-overlap guard applies.
 //! On any engine failure the caller keeps the original text; a transform
 //! never destroys what the user selected.
-//!
-//! The Smart engine lands in plan Task 6. Until then `run` refuses with a
-//! message pointing at Settings.
 
+use crate::engine::llm::{LlmEngine, LlmError};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use std::time::Duration;
 
-/// Shown whenever a transform can't run because Smart cleanup isn't set up.
+/// A transform may rewrite a whole selection, and the user is waiting on it
+/// with nothing pasted yet, so it gets longer than cleanup does.
+pub const TRANSFORM_BUDGET: Duration = Duration::from_secs(15);
+
+/// Shown whenever a transform can't run because the Smart model isn't there.
 pub const NEEDS_SMART: &str = "Transforms need Smart cleanup. Turn it on in Settings.";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -146,8 +149,6 @@ pub fn validate(list: &[Transform], dictation_hotkey: &str) -> Result<(), String
     Ok(())
 }
 
-// The Smart transform call (plan Task 6) is the caller; unused until then.
-#[allow(dead_code)]
 pub(crate) fn system_prompt(transform_prompt: &str) -> String {
     format!(
         "You transform text. The user message is the text to transform between \
@@ -164,27 +165,39 @@ pub(crate) fn system_prompt(transform_prompt: &str) -> String {
 /// application, so tag look-alikes inside it (any spacing, case or bracket
 /// lookalike) are defanged: it must not be able to close the `<text>` block
 /// and continue as instructions.
-// Used by the Smart transform call (plan Task 6); unused until then.
-#[allow(dead_code)]
 pub(crate) fn wrap_selection(selection: &str) -> String {
     crate::untrusted::fence(selection, "text")
 }
 
 /// Models occasionally echo the delimiters back, in any spacing or case;
 /// they must never be pasted.
-// Used by the Smart transform call (plan Task 6); unused until then.
-#[allow(dead_code)]
 pub(crate) fn strip_text_tags(text: &str) -> String {
     crate::untrusted::strip_wrapping_tags(text, "text")
 }
 
-/// Run `text` through the transform's prompt on the Smart model. Until that
-/// engine exists this checks the selection and refuses with `NEEDS_SMART`.
-pub fn run(text: &str, _transform_prompt: &str) -> Result<String, String> {
+/// Run `text` through the transform's prompt on the Smart model.
+pub fn run(llm: &dyn LlmEngine, text: &str, transform_prompt: &str) -> Result<String, String> {
     if text.trim().is_empty() {
         return Err("Nothing to transform.".into());
     }
-    Err(NEEDS_SMART.into())
+    let out = llm
+        .complete(
+            &system_prompt(transform_prompt),
+            &wrap_selection(text),
+            TRANSFORM_BUDGET,
+        )
+        .map_err(|e| match e {
+            LlmError::Missing => NEEDS_SMART.to_string(),
+            LlmError::Timeout => "The Smart model took too long".to_string(),
+            LlmError::Engine(e) => e,
+        })?;
+    let answer = crate::untrusted::strip_leading_block(&out, "think")
+        .ok_or("The Smart model didn't finish its answer")?;
+    let answer = strip_text_tags(answer);
+    if answer.is_empty() {
+        return Err("The Smart model returned nothing".into());
+    }
+    Ok(answer)
 }
 
 #[cfg(test)]
@@ -288,17 +301,78 @@ mod tests {
         assert_eq!(strip_text_tags("  plain  "), "plain");
     }
 
+    use crate::engine::llm::{LlmEngine, LlmError};
+    use crate::engine::EngineState;
+    use std::sync::Mutex;
+    use std::time::Duration;
+
+    /// Records what it was asked and answers with `reply`.
+    struct FakeLlm {
+        reply: fn() -> Result<String, LlmError>,
+        asked: Mutex<Option<(String, String, Duration)>>,
+    }
+
+    impl FakeLlm {
+        fn new(reply: fn() -> Result<String, LlmError>) -> FakeLlm {
+            FakeLlm {
+                reply,
+                asked: Mutex::new(None),
+            }
+        }
+    }
+
+    impl LlmEngine for FakeLlm {
+        fn complete(&self, system: &str, user: &str, budget: Duration) -> Result<String, LlmError> {
+            *self.asked.lock().unwrap() = Some((system.into(), user.into(), budget));
+            (self.reply)()
+        }
+        fn status(&self) -> EngineState {
+            EngineState::Ready
+        }
+    }
+
     #[test]
-    fn empty_selection_errors_without_network() {
+    fn empty_selection_errors_without_asking_the_model() {
+        let llm = FakeLlm::new(|| Ok("x".into()));
         assert_eq!(
-            run("   ", POLISH_PROMPT).unwrap_err(),
+            run(&llm, "   ", POLISH_PROMPT).unwrap_err(),
             "Nothing to transform."
+        );
+        assert!(llm.asked.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn missing_model_points_at_smart() {
+        let llm = FakeLlm::new(|| Err(LlmError::Missing));
+        assert_eq!(
+            run(&llm, "hello there", POLISH_PROMPT).unwrap_err(),
+            NEEDS_SMART
         );
     }
 
     #[test]
-    fn transforms_point_at_smart_until_it_exists() {
-        assert_eq!(run("hello there", POLISH_PROMPT).unwrap_err(), NEEDS_SMART);
+    fn rewrites_the_fenced_selection() {
+        let llm = FakeLlm::new(|| Ok("<think>\n</think>\n<text>Hello there.</text>".into()));
+        assert_eq!(
+            run(&llm, "hello there", POLISH_PROMPT).unwrap(),
+            "Hello there."
+        );
+        let (system, user, budget) = llm.asked.lock().unwrap().clone().unwrap();
+        assert!(system.contains(POLISH_PROMPT));
+        assert_eq!(user, wrap_selection("hello there"));
+        assert_eq!(budget, TRANSFORM_BUDGET);
+    }
+
+    #[test]
+    fn engine_failures_keep_the_selection() {
+        for reply in [
+            (|| Err(LlmError::Timeout)) as fn() -> Result<String, LlmError>,
+            || Err(LlmError::Engine("boom".into())),
+            || Ok("  ".into()),
+            || Ok("<think>still going".into()),
+        ] {
+            assert!(run(&FakeLlm::new(reply), "hello there", POLISH_PROMPT).is_err());
+        }
     }
 
     /// The selection is untrusted text from another app. A crafted one must
