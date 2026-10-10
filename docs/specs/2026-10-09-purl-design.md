@@ -31,7 +31,7 @@ the machine.
 - Correction learning on Windows (UI Automation reader). Ships disabled on Windows
   with a clear note; macOS keeps it.
 - Linux, Windows on ARM, mobile.
-- Authenticode signing. v1 Windows installer is unsigned; the guide covers the
+- Authenticode signing and Apple notarization. macOS builds use a stable self-signed identity so the Accessibility grant survives updates. v1 Windows installer is unsigned; the guide covers the
   SmartScreen "More info → Run anyway" step. Signing is the first v1.x item.
 - Streaming / live preview transcription.
 
@@ -40,7 +40,7 @@ the machine.
 | # | Deliverable | Where |
 |---|---|---|
 | 1 | App source, MIT, fresh git history | public `github.com/Fan1000-prog/purl`, local `~/Desktop/purl` |
-| 2 | Releases: macOS `.dmg` (universal), Windows NSIS `.exe` (x64), `latest.json` for the updater | GitHub Releases on `purl` |
+| 2 | Releases: macOS `.dmg` per arch (Apple Silicon, Intel — amended: `llama-server` ships per-arch), Windows NSIS `.exe` (x64), `latest.json` for the updater | GitHub Releases on `purl` |
 | 3 | README: pitch, install (both OSes), guide, benchmark, case study, privacy, credits/licences | `purl/README.md` + `purl/docs/` |
 | 4 | Landing page | private `github.com/Fan1000-prog/purl-site`, local `~/Desktop/purl-site`, hosted on Vercel (deploy needs a go-ahead) |
 
