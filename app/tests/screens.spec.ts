@@ -181,3 +181,16 @@ test("360 px wide: no horizontal scroll on any screen", async ({ page }) => {
     expect(overflow, s.view).toBeLessThanOrEqual(0);
   }
 });
+
+test("the what's-new card owes the 90-second disclosure on macOS only", async ({ page }) => {
+  await open(page, "&models=ready&disclosed=0");
+  const card = page.locator("#field-notice");
+  await expect(card).toBeVisible();
+  await expect(card).toContainText("up to 90 seconds after pasting");
+  await card.getByRole("button", { name: "Got it" }).click();
+  await expect(card).toBeHidden();
+  expect((await calls(page, "save_settings")).at(-1).newSettings.field_reading_disclosed).toBe(true);
+
+  await open(page, "&models=ready&disclosed=0&platform=windows");
+  await expect(page.locator("#field-notice")).toBeHidden();
+});

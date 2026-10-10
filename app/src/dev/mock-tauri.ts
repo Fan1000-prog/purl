@@ -13,6 +13,7 @@
 //   ax=denied|granted       Accessibility permission on macOS (default granted)
 //   fail=offline|diskfull|http   first download attempt fails this way
 //   onboarded=1             skip onboarding (onboarding_complete = true)
+//   disclosed=0             with onboarded=1: field reading not yet disclosed
 //   models=ready            every model already downloaded
 //   step_ms=<n>             ms between progress events (default 120)
 //   data=demo               history, stats, dictionary, snippets, transforms,
@@ -96,7 +97,8 @@ function install() {
     command_detection: true,
     learn_corrections: false,
     onboarding_complete: q.get("onboarded") === "1",
-    field_reading_disclosed: false,
+    // An onboarded user has seen the disclosure unless disclosed=0 says not.
+    field_reading_disclosed: q.get("onboarded") === "1" && q.get("disclosed") !== "0",
     last_seen_version: "0.9.0",
   };
 
