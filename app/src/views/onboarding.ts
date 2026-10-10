@@ -4,17 +4,17 @@ import {
   getSettings,
   saveOnboardingComplete,
   prettyHotkey,
+  speechCheck,
   type TranscriptPayload,
 } from "../main";
+import type { EngineState, ModelView } from "../types";
 import { createHotkeyRecorder, HOTKEY_RECORDER_CANCEL } from "./hotkey-recorder";
 
 const $ = <T extends HTMLElement>(id: string): T =>
   document.getElementById(id) as T;
 
 interface StatusPayload {
-  whisper_bin_found: boolean;
-  whisper_model_found: boolean;
-  whisper_model_path: string;
+  stt: EngineState;
   ollama_up: boolean;
   ollama_model_found: boolean;
   ollama_model: string;
@@ -109,12 +109,7 @@ async function renderChecks(body: HTMLElement) {
     }
     try {
       const s = await invoke<StatusPayload>("get_status");
-      const items = [
-        check(s.whisper_bin_found, "Speech engine (whisper-cli)",
-          "Not found. In Terminal, run: brew install whisper-cpp"),
-        check(s.whisper_model_found, "Speech model downloaded",
-          `Missing — expected at ${s.whisper_model_path}. The install script downloads it.`),
-      ];
+      const items = [check(...(await speechRow(s.stt)))];
       if (getSettings()?.cleanup_mode === "ai") {
         items.push(
           check(s.ollama_up, "Ollama running",
@@ -130,9 +125,9 @@ async function renderChecks(body: HTMLElement) {
       );
       ul.replaceChildren(...items);
       note.textContent = "";
-      // Whisper items gate Continue; Accessibility and Ollama are deferrable.
+      // The speech model gates Continue; Accessibility and Ollama are deferrable.
       $<HTMLButtonElement>("wiz-next").disabled =
-        !(s.whisper_bin_found && s.whisper_model_found);
+        !["ready", "idle", "loading"].includes(s.stt.state);
     } catch {
       note.textContent = "Can't check right now — you can continue and come back to Settings → Setup later.";
       $<HTMLButtonElement>("wiz-next").disabled = false;
@@ -247,4 +242,23 @@ export function initOnboarding() {
   });
 
   if (getSettings()?.onboarding_complete === false) openOnboarding();
+}
+
+const SPEECH_MODEL = "parakeet-v3";
+
+/**
+ * The speech-model checklist row. While it isn't downloaded, starts the
+ * download (a no-op if one is already running) and shows its progress.
+ */
+async function speechRow(stt: EngineState): Promise<[boolean, string, string]> {
+  if (stt.state !== "missing") return speechCheck(stt);
+  const model = (await invoke<ModelView[]>("models_status")).find((m) => m.id === SPEECH_MODEL);
+  if (model?.state === "failed") {
+    return [false, "Speech model download failed", `${model.error ?? ""} Retrying…`];
+  }
+  if (model?.state !== "downloading") await invoke("download_model", { id: SPEECH_MODEL });
+  const pct = model && model.size_bytes > 0
+    ? Math.floor((model.downloaded_bytes / model.size_bytes) * 100)
+    : 0;
+  return [false, `Downloading the speech model… ${pct}%`, "About 670 MB, one time. Keep this window open."];
 }

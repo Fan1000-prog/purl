@@ -79,7 +79,7 @@
               </button>
               <button class="feature-card card-glossary" type="button" data-tag="GLOSSARY" data-goto="settings" data-focus="glossary-text">
                 <span class="card-title">Glossary</span>
-                <span class="card-sub">Whisper spells “Yesware” as “yes where”? Add your jargon once, it’s fixed forever.</span>
+                <span class="card-sub">The speech model spells “Yesware” as “yes where”? Add your jargon once, it’s fixed forever.</span>
               </button>
               <button class="feature-card card-cleanup" type="button" data-tag="CLEANUP" data-goto="settings" data-focus="cleanup-mode">
                 <span class="card-title">Cleanup</span>
@@ -188,7 +188,7 @@
                   <select id="cleanup-mode">
                     <option value="ai">AI — smarter, adds seconds</option>
                     <option value="fast">Fast — instant, rule-based</option>
-                    <option value="off">Off — raw Whisper output</option>
+                    <option value="off">Off — raw transcript</option>
                   </select>
                 </label>
                 <label class="field"><span>Structure</span>
@@ -252,7 +252,7 @@
           <div class="settings-section" id="settings-section-learning">
             <section class="group">
               <h2 class="eyebrow">Learned corrections</h2>
-              <p class="meta">Words you have fixed by hand. Each one is used only in the phrase you corrected it in, and to help Whisper hear it right next time. They stay on this Mac: they go to Whisper and to a local cleanup model only, never to a cloud one.</p>
+              <p class="meta">Words you have fixed by hand. Each one is used only in the phrase you corrected it in. They stay on this Mac: they go to a local cleanup model only, never to a cloud one.</p>
               <ul id="learned-list" class="snippet-list"></ul>
               <p id="learned-empty" class="meta">Nothing learned yet. Fix a mis-heard word right after dictating and it will show up here.</p>
               <div class="actions">

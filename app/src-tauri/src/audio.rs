@@ -1,7 +1,6 @@
 //! Mic capture via cpal (CoreAudio). The cpal Stream is !Send, so it lives on
 //! a dedicated thread; `Recorder` talks to that thread over channels.
 
-use std::path::PathBuf;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
@@ -15,8 +14,6 @@ pub enum AudioError {
     NoDevice,
     #[error("audio stream error: {0}")]
     Stream(String),
-    #[error("failed to write WAV: {0}")]
-    Wav(#[from] hound::Error),
     #[error("recording produced no audio")]
     Empty,
 }
@@ -151,8 +148,9 @@ impl Recorder {
         let _ = self.handle.join();
     }
 
-    /// Stop capturing and write a 16 kHz mono 16-bit WAV; returns its path.
-    pub fn stop(self, out_dir: &std::path::Path) -> Result<PathBuf, AudioError> {
+    /// Stop capturing and return the audio as 16 kHz mono f32, resampled in
+    /// memory. Nothing touches the disk.
+    pub fn stop_samples(self) -> Result<Vec<f32>, AudioError> {
         let _ = self.stop_tx.send(());
         let (raw, sample_rate, channels) = self
             .handle
@@ -164,7 +162,7 @@ impl Recorder {
         if resampled.is_empty() {
             return Err(AudioError::Empty);
         }
-        write_wav(&resampled, out_dir)
+        Ok(resampled)
     }
 }
 
@@ -195,28 +193,6 @@ fn resample_linear(input: &[f32], from_rate: u32, to_rate: u32) -> Vec<f32> {
             a + (b - a) * frac
         })
         .collect()
-}
-
-fn write_wav(samples: &[f32], out_dir: &std::path::Path) -> Result<PathBuf, AudioError> {
-    let path = out_dir.join(format!(
-        "purl-{}.wav",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_millis())
-            .unwrap_or(0)
-    ));
-    let spec = hound::WavSpec {
-        channels: 1,
-        sample_rate: TARGET_SAMPLE_RATE,
-        bits_per_sample: 16,
-        sample_format: hound::SampleFormat::Int,
-    };
-    let mut writer = hound::WavWriter::create(&path, spec)?;
-    for &s in samples {
-        writer.write_sample((s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16)?;
-    }
-    writer.finalize()?;
-    Ok(path)
 }
 
 #[cfg(test)]
@@ -257,19 +233,5 @@ mod tests {
     fn resample_same_rate_is_identity() {
         let input = sine(16_000, 0.1, 440.0);
         assert_eq!(resample_linear(&input, 16_000, 16_000), input);
-    }
-
-    #[test]
-    fn write_wav_produces_16k_mono_16bit() {
-        let dir = std::env::temp_dir();
-        let samples = sine(16_000, 0.25, 440.0);
-        let path = write_wav(&samples, &dir).unwrap();
-        let reader = hound::WavReader::open(&path).unwrap();
-        let spec = reader.spec();
-        assert_eq!(spec.sample_rate, 16_000);
-        assert_eq!(spec.channels, 1);
-        assert_eq!(spec.bits_per_sample, 16);
-        assert_eq!(reader.len(), 4_000);
-        std::fs::remove_file(path).unwrap();
     }
 }

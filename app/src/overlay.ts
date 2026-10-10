@@ -8,6 +8,7 @@
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { burstConfetti } from "./celebrate";
+import type { EngineStatusView } from "./types";
 
 const canvas = document.getElementById("wave") as HTMLCanvasElement;
 const ctx = canvas.getContext("2d")!;
@@ -77,6 +78,14 @@ void listen<string>("state", (e) => {
     level = 0;
   }
 });
+
+// "Warming up…" under the spinner while the speech model is still loading,
+// so a first dictation that waits on it doesn't look stuck.
+function showWarming(status: EngineStatusView) {
+  document.body.classList.toggle("warming", status.stt.state === "loading");
+}
+void invoke<EngineStatusView>("engine_status").then(showWarming);
+void listen<EngineStatusView>("engine-status", (e) => showWarming(e.payload));
 
 // Push a sample every other frame (~30/s) so the scroll speed reads
 // naturally against the 20 samples/s the recorder emits.

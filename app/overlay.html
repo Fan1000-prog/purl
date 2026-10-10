@@ -125,7 +125,15 @@
       #celebrate.show {
         display: flex;
       }
-      #celebrate-caption {
+      /* ---------- warming: the speech model is still loading ---------- */
+      #warming {
+        display: none;
+      }
+      body.processing.warming #warming {
+        display: block;
+      }
+      #celebrate-caption,
+      #warming {
         font: 600 11px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
         color: #f5f3ef;
         background: #161618;
@@ -243,6 +251,7 @@
       <div id="celebrate-caption"></div>
       <div id="celebrate-track"><div id="celebrate-fill"></div></div>
     </div>
+    <div id="warming">Warming up…</div>
 
     <div id="idle" aria-label="Ready to dictate" title="Hold your dictation hotkey to talk">
       <svg width="14" height="14" viewBox="0 0 16 16" fill="none">

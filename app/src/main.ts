@@ -13,6 +13,7 @@ import { createHotkeyRecorder, HOTKEY_RECORDER_CANCEL } from "./views/hotkey-rec
 import { initModelPicker } from "./views/model-picker";
 import { celebrate } from "./celebrate";
 import { makeToken, providerLabel, splitToken } from "./engine-token";
+import type { EngineState } from "./types";
 
 export interface Settings {
   hotkey: string;
@@ -20,7 +21,6 @@ export interface Settings {
   ai_engine: "local" | "claude" | "gemini";
   claude_model: string;
   gemini_model: string;
-  whisper_model_path: string;
   inject_mode: "paste" | "clipboard_only";
   cleanup_mode: "fast" | "ai" | "off";
   structure_mode: "none" | "email" | "coding";
@@ -96,9 +96,7 @@ export interface TranscriptPayload {
 }
 
 interface StatusPayload {
-  whisper_bin_found: boolean;
-  whisper_model_found: boolean;
-  whisper_model_path: string;
+  stt: EngineState;
   ollama_up: boolean;
   ollama_model_found: boolean;
   ollama_model: string;
@@ -151,6 +149,21 @@ function setState(state: string) {
   toggleBtn.classList.toggle("is-processing", state === "processing");
 }
 
+/** The speech engine as a setup-checklist row: [ok, label, fix]. */
+export function speechCheck(stt: EngineState): [boolean, string, string] {
+  switch (stt.state) {
+    case "ready":
+    case "idle":
+      return [true, "Speech model (Parakeet v3) ready", ""];
+    case "loading":
+      return [true, "Speech model (Parakeet v3) loading…", ""];
+    case "failed":
+      return [false, "Speech model (Parakeet v3) failed to load", stt.reason];
+    case "missing":
+      return [false, "Speech model (Parakeet v3) not downloaded", "Download it in Setup (about 670 MB, one time)."];
+  }
+}
+
 function checkItem(ok: boolean, label: string, fix?: string): HTMLLIElement {
   const li = document.createElement("li");
   li.className = ok ? "ok" : "bad";
@@ -185,16 +198,7 @@ async function refreshStatus() {
 
   const list = $<HTMLUListElement>("check-items");
   list.replaceChildren(
-    checkItem(
-      s.whisper_bin_found,
-      "Speech engine (whisper-cli)",
-      "Not found. In Terminal, run: brew install whisper-cpp",
-    ),
-    checkItem(
-      s.whisper_model_found,
-      "Speech model downloaded",
-      `Missing — expected at ${s.whisper_model_path}. The install script downloads it, or see the README.`,
-    ),
+    checkItem(...speechCheck(s.stt)),
     // Green for cloud engines so a working setup shows no false alarm — but the
     // label must still be true. Ollama is the fallback rung on every cloud
     // failure, so if it is down we say so rather than claiming it is running.
@@ -366,7 +370,6 @@ window.addEventListener("DOMContentLoaded", () => {
         selected.engine === "gemini"
           ? selected.model
           : (currentSettings?.gemini_model ?? "gemini-3.5-flash-lite"),
-      whisper_model_path: "",
       inject_mode: $<HTMLSelectElement>("inject-mode").value as
         | "paste"
         | "clipboard_only",

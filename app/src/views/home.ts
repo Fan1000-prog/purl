@@ -51,7 +51,7 @@ function renderItem(e: HistoryEntry): HTMLLIElement {
 
   const details = document.createElement("details");
   const summary = document.createElement("summary");
-  summary.textContent = "Raw Whisper output";
+  summary.textContent = "Raw transcript";
   details.appendChild(summary);
   const raw = document.createElement("p");
   raw.className = "transcript muted";
