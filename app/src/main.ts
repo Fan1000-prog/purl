@@ -48,20 +48,21 @@ export function setCurrentHotkey(hk: string): void {
 }
 
 /** Persist onboarding_complete=true without disturbing other settings.
- *  Also marks field reading as disclosed: the wizard says it plainly, so a
- *  user who has just read it there must not also get the one-time notice. */
-export async function saveOnboardingComplete(): Promise<void> {
+ *  `disclosed` is true only when setup showed the field-reading disclosure
+ *  (macOS); then the one-time notice would repeat it, so it is marked seen.
+ *  Otherwise the notice still owes it. */
+export async function saveOnboardingComplete(disclosed: boolean): Promise<void> {
   const s = await invoke<Settings>("get_settings");
   s.onboarding_complete = true;
-  s.field_reading_disclosed = true;
-  // Stamp the current version too: someone who just finished the wizard has
+  if (disclosed) s.field_reading_disclosed = true;
+  // Stamp the current version too: someone who just finished setup has
   // read everything the "what's new" card would tell them, and a changelog
   // for the only version they have ever run is noise.
   s.last_seen_version = await getVersion().catch(() => "");
   await invoke("save_settings", { newSettings: s });
   if (currentSettings) {
     currentSettings.onboarding_complete = true;
-    currentSettings.field_reading_disclosed = true;
+    currentSettings.field_reading_disclosed = s.field_reading_disclosed;
     currentSettings.last_seen_version = s.last_seen_version;
   }
 }

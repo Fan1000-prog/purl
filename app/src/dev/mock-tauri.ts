@@ -84,7 +84,7 @@ function install() {
     command_detection: true,
     learn_corrections: false,
     onboarding_complete: q.get("onboarded") === "1",
-    field_reading_disclosed: true,
+    field_reading_disclosed: false,
     last_seen_version: "0.9.0",
   };
 

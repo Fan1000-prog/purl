@@ -203,7 +203,7 @@
                 <label class="field field-check"><span>Learn corrections</span>
                   <span class="check-row">
                     <input type="checkbox" id="learn-corrections" />
-                    <span class="meta">After pasting, Purl reads that text field for 30 seconds to notice words you fix by hand. Only the corrected word and the words either side of it are saved, and only on this Mac. Fields macOS marks as secure text — password fields — are never read, and learned words are never sent to a cloud model, even if you have cloud cleanup on. A dot appears beside the pill while it is watching; macOS won't prompt you, because this uses the same Accessibility permission as pasting.</span>
+                    <span class="meta">After pasting, Purl reads that text field for up to 90 seconds (less once you stop editing) to notice words you fix by hand. Only the corrected word and the words either side of it are saved, and only on this Mac. Fields macOS marks as secure text — password fields — are never read, and learned words are never sent to a cloud model, even if you have cloud cleanup on. A dot appears beside the pill while it is watching; macOS won't prompt you, because this uses the same Accessibility permission as pasting.</span>
                   </span>
                 </label>
                 <div class="actions">
@@ -282,7 +282,8 @@
       <div class="wizard-card" role="dialog" aria-modal="true" aria-labelledby="fn-title">
         <h2 id="fn-title">What's new</h2>
         <p class="meta"><strong>Sharper dictation, your choice of model.</strong> Cleanup can now run on Gemini or Claude using your own API key. Faster, and better on long or accented speech. Set it up in Settings → Cleanup model.</p>
-        <p class="meta"><strong>Purl now learns from you.</strong> Fix a mis-heard word right after dictating and it will spell it your way next time.</p>
+        <p class="meta"><strong>Purl now learns from you.</strong> Fix a mis-heard word right after dictating and it will spell it your way next time. To notice the fix, Purl reads the text field it pasted into for up to 90 seconds after pasting (less once you stop editing). Password fields are never read, and you can turn this off in Settings → Learn corrections.</p>
+        <p class="meta err hidden" id="fn-error"></p>
         <div class="wizard-foot">
           <span class="meta"></span>
           <button id="fn-dismiss" class="ghost wiz-primary" type="button">Got it</button>

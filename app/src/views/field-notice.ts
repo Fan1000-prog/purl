@@ -14,6 +14,7 @@
 
 import { getVersion } from "@tauri-apps/api/app";
 import { getSettings, saveVersionSeen } from "../main";
+import { platform } from "../platform";
 
 const $ = <T extends HTMLElement>(id: string): T =>
   document.getElementById(id) as T;
@@ -44,9 +45,12 @@ export function initFieldNotice() {
   // top of it.
   if (s?.onboarding_complete !== true) return;
 
+  // Field reading (correction learning) only exists on macOS.
+  const owesDisclosure = platform() === "macos" && s.field_reading_disclosed === false;
+
   void getVersion()
     .then((version) => {
-      if (s.last_seen_version !== version || s.field_reading_disclosed === false) {
+      if (s.last_seen_version !== version || owesDisclosure) {
         show(version);
       }
     })
@@ -54,6 +58,6 @@ export function initFieldNotice() {
       // Version unreadable. Fall back to the disclosure alone — that is the
       // part that must not be skipped. Recording an empty version leaves the
       // card due again next launch, which is the safe direction to fail.
-      if (s.field_reading_disclosed === false) show("");
+      if (owesDisclosure) show("");
     });
 }
