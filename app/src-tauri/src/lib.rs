@@ -1495,7 +1495,7 @@ fn set_overlay_hit_rect(app: AppHandle, rect: Option<[f64; 4]>) {
 
 #[tauri::command]
 fn get_glossary(app: AppHandle) -> String {
-    std::fs::read_to_string(dictionary_path(&app)).unwrap_or_default()
+    dictionary::read_text(&dictionary_path(&app))
 }
 
 #[tauri::command]

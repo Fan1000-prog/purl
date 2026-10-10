@@ -152,6 +152,17 @@ mod tests {
     }
 
     #[test]
+    fn seed_entry_fixes_casing_but_leaves_pearl_alone() {
+        let seed = Dictionary::parse(crate::dictionary::SEED);
+        assert_eq!(clean("I use purl daily", &seed), "I use Purl daily");
+        // Parakeet hears "Purl" as "Pearl", but pearl is a real word.
+        assert_eq!(
+            clean("Hello, Pearl. A pearl necklace.", &seed),
+            "Hello, Pearl. A pearl necklace."
+        );
+    }
+
+    #[test]
     fn fixes_dictionary_casing_word_boundary() {
         assert_eq!(
             clean("the api notes are in the qbr deck now", &dictionary()),
