@@ -34,3 +34,9 @@ ort = { version = "=2.0.0-rc.13", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-graphics = "0.24"
+
+# The benchmark (bench/README.md). `test = true` so `cargo test` runs its
+# WER unit tests.
+[[example]]
+name = "bench"
+test = true

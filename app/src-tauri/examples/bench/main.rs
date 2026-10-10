@@ -1,0 +1,3 @@
+mod wer;
+
+fn main() {}
