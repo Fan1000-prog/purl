@@ -23,6 +23,8 @@ test("happy path: welcome → permissions → download → try it → finish", a
   await expect(rows).toHaveCount(2);
   await expect(rows.nth(0)).toHaveAttribute("data-trust", "granted");
   await expect(rows.nth(1)).toContainText("Accessibility");
+  // Finishing marks field reading as disclosed, so setup must say it plainly.
+  await expect(rows.nth(1)).toContainText("read that text field for 30 seconds");
   await primary(page).click();
 
   const card = panel(page).locator(".model-card");

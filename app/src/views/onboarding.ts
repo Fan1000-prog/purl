@@ -159,7 +159,13 @@ function permissions() {
   const mic = permissionRow("Microphone", "So Purl can hear you.", SETTINGS_URLS[os].mic);
   const rows = [mic.row];
   const ax = os === "macos"
-    ? permissionRow("Accessibility", "So Purl can paste at your cursor. Without it, your words go to the clipboard.", SETTINGS_URLS.macos.ax)
+    ? permissionRow(
+        "Accessibility",
+        "So Purl can paste at your cursor. Without it, your words go to the clipboard. " +
+          "It also lets Purl read that text field for 30 seconds after pasting, to learn words you fix by hand. " +
+          "Password fields are never read, and you can turn this off in Settings.",
+        SETTINGS_URLS.macos.ax,
+      )
     : null;
   if (ax) rows.push(ax.row);
 
