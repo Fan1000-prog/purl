@@ -1,250 +1,290 @@
+// First-run setup, four steps: welcome → permissions → speech model download
+// → try it. Smart cleanup is offered afterwards on Home (smart-offer.ts), so it
+// never sits in the critical path. "Set up later" is always there: a user who
+// is offline or busy can finish setup from Home and Settings.
+
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import {
-  getSettings,
-  saveOnboardingComplete,
-  prettyHotkey,
-  type TranscriptPayload,
-} from "../main";
-import { createHotkeyRecorder, HOTKEY_RECORDER_CANCEL } from "./hotkey-recorder";
+import { openUrl } from "@tauri-apps/plugin-opener";
+import { getSettings, saveOnboardingComplete, type TranscriptPayload } from "../main";
+import { mountMascot, type Mascot } from "../components/mascot";
+import { mountModelDownload, type ModelDownload } from "../components/model-download";
+import { displayHotkey, platform } from "../platform";
+import type { EngineState, EngineStatusView, Trust } from "../types";
+import { showSmartOffer } from "./smart-offer";
+import { FIELD_READING_DISCLOSURE } from "../disclosure";
 
-const $ = <T extends HTMLElement>(id: string): T =>
-  document.getElementById(id) as T;
+const STEPS = ["welcome", "permissions", "model", "try"] as const;
+type Step = (typeof STEPS)[number];
+const SPEECH_MODEL = "parakeet-v3";
+const PERMISSION_POLL_MS = 2000;
+
+const SETTINGS_URLS = {
+  macos: {
+    mic: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
+    ax: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+  },
+  windows: { mic: "ms-settings:privacy-microphone", ax: "" },
+};
 
 interface StatusPayload {
-  whisper_bin_found: boolean;
-  whisper_model_found: boolean;
-  whisper_model_path: string;
-  ollama_up: boolean;
-  ollama_model_found: boolean;
-  ollama_model: string;
   accessibility_trusted: boolean;
-  hotkey: string;
-  state: string;
 }
 
-const TOTAL_STEPS = 5;
-let step = 1;
-let open = false;
+let root: HTMLElement;
+let step: Step = "welcome";
+let mascot: Mascot | null = null;
+let download: ModelDownload | null = null;
 let pollTimer: ReturnType<typeof setInterval> | undefined;
-let gotFirstResult = false;
+let sttState: EngineState["state"] = "missing";
+// True once the macOS Accessibility row, which carries the field-reading
+// disclosure, has been on screen. Only then may finishing mark it disclosed.
+let disclosureShown = false;
 
-function el(tag: string, className: string, text: string): HTMLElement {
-  const node = document.createElement(tag);
-  if (className) node.className = className;
-  node.textContent = text;
+function h<K extends keyof HTMLElementTagNameMap>(
+  tag: K,
+  props: Partial<HTMLElementTagNameMap[K]> & { className?: string } = {},
+  ...children: (Node | string)[]
+): HTMLElementTagNameMap[K] {
+  const node = Object.assign(document.createElement(tag), props);
+  node.append(...children);
   return node;
 }
 
-function check(ok: boolean, label: string, fix: string): HTMLLIElement {
-  const li = document.createElement("li");
-  li.className = ok ? "ok" : "bad";
-  li.appendChild(el("span", "mark", "●"));
-  li.appendChild(document.createTextNode(` ${label}`));
-  if (!ok && fix) li.appendChild(el("div", "fix", fix));
-  return li;
+function button(label: string, kind: "primary" | "ghost", onClick: () => void): HTMLButtonElement {
+  const b = h("button", { type: "button", className: kind === "primary" ? "btn btn-primary" : "btn" }, label);
+  b.addEventListener("click", onClick);
+  return b;
 }
 
-function hotkeyChip(): HTMLElement {
-  const kbd = document.createElement("kbd");
-  kbd.textContent = prettyHotkey(getSettings()?.hotkey ?? "CmdOrCtrl+Shift+Space");
-  return kbd;
+function hotkey(): string {
+  return displayHotkey(getSettings()?.hotkey ?? "CmdOrCtrl+Shift+Space");
 }
 
-function setChrome(title: string, nextLabel: string, nextEnabled: boolean) {
-  $("wiz-title").textContent = title;
-  $<HTMLSpanElement>("wiz-progress").textContent = `${step} of ${TOTAL_STEPS}`;
-  const next = $<HTMLButtonElement>("wiz-next");
-  next.textContent = nextLabel;
-  next.disabled = !nextEnabled;
+// ---------- chrome ----------
+
+function teardownStep() {
+  clearInterval(pollTimer);
+  pollTimer = undefined;
+  mascot?.destroy();
+  mascot = null;
+  download?.destroy();
+  download = null;
 }
 
-function renderWelcome(body: HTMLElement) {
-  setChrome("Talk instead of type.", "Set me up", true);
-  body.appendChild(
-    el("p", "",
-      "Hold a hotkey, say what you mean, release — and it's typed wherever your cursor is. Punctuation fixed, filler words gone, your words spelled right."),
-  );
-  body.appendChild(
-    el("p", "",
-      "Your voice never leaves this Mac. Transcription and cleanup both run here, and audio is never uploaded — not under any setting."),
-  );
-  body.appendChild(
-    el("p", "",
-      "Two things worth knowing up front. Cleanup can be pointed at Gemini or Claude with your own API key, and then your transcript text — never your audio — goes to them. And after each paste, Purl reads that text field for 30 seconds to catch words you fix by hand, so it can spell them right next time. Fields macOS marks as secure text — password fields — are never read, and both are switches you control in Settings."),
-  );
-}
+function frame(title: string, body: Node[], actions: Node[], above: Node[] = []) {
+  const index = STEPS.indexOf(step);
+  const dots = h("ol", { className: "onb-dots" });
+  dots.setAttribute("aria-label", `Step ${index + 1} of ${STEPS.length}`);
+  STEPS.forEach((_, i) => dots.append(h("li", { className: i <= index ? "on" : "" })));
 
-function renderHotkey(body: HTMLElement) {
-  const current = prettyHotkey(getSettings()?.hotkey ?? "CmdOrCtrl+Shift+Space");
-  setChrome("Your dictation key.", `Keep ${current}`, true);
-  body.appendChild(
-    el("p", "",
-      "Hold this key combo anywhere to talk. Keep the default, or press Change and hit the keys you want."),
-  );
-  body.appendChild(
-    createHotkeyRecorder({
-      onSaved: () => {
-        $<HTMLButtonElement>("wiz-next").textContent = "Continue";
-      },
-    }),
-  );
-}
+  const later = step === "welcome" ? [] : [h("button", { type: "button", className: "onb-later" }, "Set up later")];
+  later[0]?.addEventListener("click", () => void finish());
 
-async function renderChecks(body: HTMLElement) {
-  setChrome("Quick check.", "Continue", false);
-  body.appendChild(
-    el("p", "", "Making sure everything's in place. Red items come with a fix."),
-  );
-  const ul = document.createElement("ul");
-  ul.className = "wiz-checks";
-  body.appendChild(ul);
-  const note = el("p", "", "");
-  body.appendChild(note);
-
-  const update = async () => {
-    if (!open || step !== 3) {
-      stopPolling();
-      return;
-    }
-    try {
-      const s = await invoke<StatusPayload>("get_status");
-      const items = [
-        check(s.whisper_bin_found, "Speech engine (whisper-cli)",
-          "Not found. In Terminal, run: brew install whisper-cpp"),
-        check(s.whisper_model_found, "Speech model downloaded",
-          `Missing — expected at ${s.whisper_model_path}. The install script downloads it.`),
-      ];
-      if (getSettings()?.cleanup_mode === "ai") {
-        items.push(
-          check(s.ollama_up, "Ollama running",
-            "Open the Ollama app, or run: ollama serve"),
-          check(s.ollama_model_found, `AI cleanup model (${s.ollama_model})`,
-            `One-time download: ollama pull ${s.ollama_model}`),
-        );
-      }
-      items.push(
-        check(s.accessibility_trusted,
-          "Accessibility permission — lets it type for you, and read the field it typed into",
-          "System Settings → Privacy & Security → Accessibility → turn on Purl. You can do this later — transcripts will go to your clipboard instead. This one grant covers both: pasting at your cursor, and reading back the field afterwards to catch words you fix by hand. macOS asks once, for both. Turn the reading half off any time in Settings → Learn corrections."),
-      );
-      ul.replaceChildren(...items);
-      note.textContent = "";
-      // Whisper items gate Continue; Accessibility and Ollama are deferrable.
-      $<HTMLButtonElement>("wiz-next").disabled =
-        !(s.whisper_bin_found && s.whisper_model_found);
-    } catch {
-      note.textContent = "Can't check right now — you can continue and come back to Settings → Setup later.";
-      $<HTMLButtonElement>("wiz-next").disabled = false;
-    }
-  };
-  await update();
-  if (open && step === 3) {
-    pollTimer = setInterval(() => void update(), 2000);
-  }
-}
-
-function renderFirstDictation(body: HTMLElement) {
-  setChrome("Try it.", "Nice — what else can it do?", gotFirstResult);
-  const p = el("p", "", "Click into any text field, hold ");
-  p.appendChild(hotkeyChip());
-  p.appendChild(
-    document.createTextNode(
-      " and say: “Testing Purl, one two three.” Then release.",
+  root.replaceChildren(
+    h(
+      "div",
+      { className: "onb-panel" },
+      dots,
+      ...above,
+      h("h1", { id: "onb-title", className: "onb-title" }, title),
+      ...body,
+      h("div", { className: "onb-actions" }, ...actions),
+      ...later,
     ),
   );
-  body.appendChild(p);
-  const result = el("p", "transcript hidden", "");
-  result.id = "wiz-result";
-  body.appendChild(result);
-  const cheer = el("p", "hidden", "That's it. It typed itself.");
-  cheer.id = "wiz-cheer";
-  body.appendChild(cheer);
-  const err = el("p", "hidden", "");
-  err.id = "wiz-error";
-  body.appendChild(err);
+  root.querySelector<HTMLElement>(".btn-primary:not(:disabled), textarea")?.focus();
 }
 
-function renderFeatures(body: HTMLElement) {
-  setChrome("It does more than type.", "Start talking", true);
-  body.appendChild(
-    el("p", "", "Four things worth knowing about — all one click from Home."),
+function go(next: Step) {
+  teardownStep();
+  step = next;
+  root.dataset.step = next;
+  ({ welcome, permissions, model, try: tryIt })[next]();
+}
+
+const back = () => go(STEPS[STEPS.indexOf(step) - 1]);
+
+// ---------- 1. welcome ----------
+
+function welcome() {
+  const art = h("div", { className: "onb-mascot" });
+  frame(
+    "Speak softly. Send it clean.",
+    [
+      h(
+        "p",
+        { className: "onb-lede" },
+        `Press ${hotkey()}, talk, press it again. Purl types your words where your cursor is, tidied up. It all runs on this computer: no account, and your voice never leaves it.`,
+      ),
+    ],
+    [button("Set up Purl", "primary", () => go("permissions"))],
+    [art],
   );
-  // Clone the home feature grid; make cards inert (tour, not nav).
-  const grid = document
-    .querySelector<HTMLDivElement>("#view-home .feature-grid")
-    ?.cloneNode(true) as HTMLDivElement | null;
-  if (grid) {
-    grid.querySelectorAll("button").forEach((b) => (b.disabled = true));
-    body.appendChild(grid);
-  }
-}
-
-function stopPolling() {
-  if (pollTimer !== undefined) {
-    clearInterval(pollTimer);
-    pollTimer = undefined;
-  }
-}
-
-function render() {
-  stopPolling();
-  const body = $("wiz-body");
-  document.dispatchEvent(new Event(HOTKEY_RECORDER_CANCEL));
-  body.replaceChildren();
-  if (step === 1) renderWelcome(body);
-  else if (step === 2) renderHotkey(body);
-  else if (step === 3) void renderChecks(body);
-  else if (step === 4) renderFirstDictation(body);
-  else renderFeatures(body);
-}
-
-function close() {
-  document.dispatchEvent(new Event(HOTKEY_RECORDER_CANCEL));
-  stopPolling();
-  open = false;
-  $("onboarding").classList.add("hidden");
-  void saveOnboardingComplete().catch(() => {
-    // Non-fatal: wizard reappears next launch, which is acceptable.
+  mascot = mountMascot(art, {
+    size: 120,
+    surface: matchMedia("(prefers-color-scheme: dark)").matches ? "deep" : "cream",
   });
+}
+
+// ---------- 2. permissions ----------
+
+const TRUST_LABEL: Record<Trust | "unknown", string> = {
+  granted: "Allowed",
+  denied: "Not allowed",
+  not_required: "Not needed",
+  unknown: "Asked the first time you dictate",
+};
+
+function permissionRow(name: string, why: string, url: string) {
+  const status = h("span", { className: "perm-status" });
+  const row = h(
+    "li",
+    { className: "perm-row" },
+    h("div", {}, h("div", { className: "perm-name" }, name), h("div", { className: "perm-why muted" }, why)),
+    status,
+    button("Open Settings", "ghost", () => void openUrl(url)),
+  );
+  const set = (t: Trust | "unknown") => {
+    row.dataset.trust = t;
+    status.textContent = TRUST_LABEL[t];
+  };
+  return { row, set };
+}
+
+async function micTrust(): Promise<Trust | "unknown"> {
+  // mic_status lands with the platform layer; until then the OS asks on the
+  // first recording, which is what we say.
+  return invoke<Trust>("mic_status").catch(() => "unknown" as const);
+}
+
+function permissions() {
+  const os = platform();
+  const mic = permissionRow("Microphone", "So Purl can hear you.", SETTINGS_URLS[os].mic);
+  const rows = [mic.row];
+  const ax = os === "macos"
+    ? permissionRow(
+        "Accessibility",
+        `So Purl can paste at your cursor. Without it, your words go to the clipboard. ${FIELD_READING_DISCLOSURE}`,
+        SETTINGS_URLS.macos.ax,
+      )
+    : null;
+  if (ax) {
+    rows.push(ax.row);
+    disclosureShown = true;
+  }
+
+  const note = h("p", { className: "onb-note warn-text", hidden: true });
+  frame(
+    "Two quick permissions.",
+    [
+      h("p", { className: "onb-lede" }, os === "macos"
+        ? "macOS asks before any app can hear you or type for you. Turn Purl on in each, then come back here."
+        : "Windows asks before any app can use your microphone. Turn it on, then come back here."),
+      h("ul", { className: "perm-list" }, ...rows),
+      note,
+    ],
+    [button("Back", "ghost", back), button("Continue", "primary", () => go("model"))],
+  );
+
+  const update = async () => {
+    const m = await micTrust();
+    mic.set(m);
+    let axTrust: Trust = "not_required";
+    if (ax) {
+      const s = await invoke<StatusPayload>("get_status").catch(() => null);
+      axTrust = s ? (s.accessibility_trusted ? "granted" : "denied") : "denied";
+      ax.set(axTrust);
+    }
+    note.hidden = m !== "denied";
+    note.textContent = "Purl can't hear you without the microphone. You can still continue and turn it on later.";
+  };
+  void update();
+  pollTimer = setInterval(() => void update(), PERMISSION_POLL_MS);
+}
+
+// ---------- 3. speech model ----------
+
+function model() {
+  const slot = h("div");
+  const next = button("Continue", "primary", () => go("try"));
+  next.disabled = true;
+  frame(
+    "Download the speech model.",
+    [
+      h("p", { className: "onb-lede" }, "Purl turns speech into text on your computer, so it needs this model once. After that it works offline."),
+      slot,
+    ],
+    [button("Back", "ghost", back), next],
+  );
+  download = mountModelDownload(slot, {
+    id: SPEECH_MODEL,
+    title: "Parakeet v3",
+    detail: "runs on your computer",
+    onReady: () => {
+      next.disabled = false;
+      next.focus();
+    },
+  });
+}
+
+// ---------- 4. try it ----------
+
+function tryIt() {
+  const box = h("textarea", { className: "onb-try", rows: 4, placeholder: "Your words will appear here." });
+  box.setAttribute("aria-label", "Try dictating here");
+  const status = h("p", { className: "onb-note muted", hidden: true });
+  status.setAttribute("role", "status");
+  frame(
+    "Try it.",
+    [h("p", { className: "onb-lede" }, `Press ${hotkey()} and say something, then press it again.`), box, status],
+    [button("Back", "ghost", back), button("Finish", "primary", () => void finish())],
+  );
+  showWarmup();
+}
+
+function showWarmup() {
+  const status = root.querySelector<HTMLElement>(".onb-note");
+  if (!status || step !== "try") return;
+  status.hidden = sttState !== "loading";
+  status.textContent = "Warming up the speech model. Your first dictation may take a few seconds.";
+}
+
+// ---------- open / close ----------
+
+async function finish() {
+  teardownStep();
+  root.classList.add("hidden");
+  await saveOnboardingComplete(disclosureShown).catch(() => {
+    // Non-fatal: setup shows again next launch.
+  });
+  void showSmartOffer();
 }
 
 export function openOnboarding() {
-  step = 1;
-  gotFirstResult = false;
-  open = true;
-  $("onboarding").classList.remove("hidden");
-  render();
+  disclosureShown = false;
+  root.classList.remove("hidden");
+  go("welcome");
 }
 
 export function initOnboarding() {
-  $<HTMLButtonElement>("wiz-skip").addEventListener("click", close);
-  $<HTMLButtonElement>("wiz-next").addEventListener("click", () => {
-    if (step >= TOTAL_STEPS) {
-      close();
-      return;
-    }
-    step += 1;
-    render();
-  });
-  $<HTMLButtonElement>("replay-tour").addEventListener("click", openOnboarding);
+  root = document.getElementById("onboarding")!;
+  document.getElementById("replay-tour")?.addEventListener("click", openOnboarding);
 
   void listen<TranscriptPayload>("result", (e) => {
-    if (!open || step !== 4) return;
-    gotFirstResult = true;
-    const result = $("wiz-result");
-    result.textContent = e.payload.cleaned;
-    result.classList.remove("hidden");
-    $("wiz-cheer").classList.remove("hidden");
-    $("wiz-error").classList.add("hidden");
-    $<HTMLButtonElement>("wiz-next").disabled = false;
-  });
-  void listen<string>("pipeline-error", (e) => {
-    if (!open || step !== 4) return;
-    const err = $("wiz-error");
-    err.textContent = `Hmm, that didn't work (${e.payload}). Check the previous step's red items, or skip and try from the app.`;
-    err.classList.remove("hidden");
+    if (step !== "try" || root.classList.contains("hidden")) return;
+    const box = root.querySelector<HTMLTextAreaElement>(".onb-try");
+    if (box) box.value = e.payload.cleaned;
   });
 
+  const onEngine = (v: EngineStatusView) => {
+    sttState = v.stt.state;
+    showWarmup();
+  };
+  void listen<EngineStatusView>("engine-status", (e) => onEngine(e.payload));
+  // engine_status arrives with the speech engine; until then, no warm-up note.
+  void invoke<EngineStatusView>("engine_status").then(onEngine, () => {});
+
   if (getSettings()?.onboarding_complete === false) openOnboarding();
+  else void showSmartOffer();
 }

@@ -11,7 +11,7 @@ use std::sync::Mutex;
 pub const CAP: usize = 200;
 
 /// Serializes every load-modify-save on the store. A live watcher's `add`
-/// (up to ~30s after a paste) can overlap the next dictation's
+/// (up to 90s after a paste) can overlap the next dictation's
 /// `record_hits`; without this, both read the file, modify their own copy,
 /// and write it back, so whichever wins the rename silently erases the
 /// other's update.
@@ -626,7 +626,7 @@ mod tests {
         std::fs::remove_file(&path).unwrap();
     }
 
-    /// A live watcher's `add` (up to ~30s after a paste) can overlap the next
+    /// A live watcher's `add` (up to 90s after a paste) can overlap the next
     /// dictation's `record_hits` on the same store. Without serializing the
     /// load-modify-save, one writer's rename can silently erase the other's
     /// update. This asserts the outcome (nothing lost), not any timing, so it
