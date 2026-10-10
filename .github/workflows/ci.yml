@@ -3,6 +3,8 @@ on:
   pull_request: {}
   push:
     branches: [main]
+permissions:
+  contents: read
 jobs:
   rust:
     strategy:
@@ -14,42 +16,18 @@ jobs:
       run:
         working-directory: app/src-tauri
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
         with:
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: app/src-tauri
       # Windows: CPU-only ONNX Runtime from Microsoft, linked dynamically.
-      # pyke's CDN has no CPU-only Windows build (only DirectML/GPU ones), and
-      # its build assumes AVX2. Pinned by sha256.
-      - name: Cache ONNX Runtime (Windows)
+      - name: ONNX Runtime (Windows)
         if: runner.os == 'Windows'
-        uses: actions/cache@v4
-        with:
-          path: ${{ runner.temp }}/onnxruntime
-          key: onnxruntime-win-x64-1.28.0
-      - name: Fetch ONNX Runtime (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        working-directory: ${{ runner.temp }}
-        run: |
-          $dir = "onnxruntime"
-          $lib = Join-Path $env:RUNNER_TEMP "$dir/onnxruntime-win-x64-1.28.0/lib"
-          if (-not (Test-Path "$lib/onnxruntime.dll")) {
-            $url = "https://github.com/microsoft/onnxruntime/releases/download/v1.28.0/onnxruntime-win-x64-1.28.0.zip"
-            for ($i = 1; $i -le 3; $i++) {
-              try { Invoke-WebRequest $url -OutFile ort.zip; break } catch { if ($i -eq 3) { throw }; Start-Sleep 10 }
-            }
-            $hash = (Get-FileHash ort.zip -Algorithm SHA256).Hash.ToLower()
-            if ($hash -ne "abef733dacbe2f571547a7150b479b5cb9cc0df22f96c24983a42cadb1b4f8bc") { throw "onnxruntime zip sha256 mismatch: $hash" }
-            Expand-Archive ort.zip -DestinationPath $dir -Force
-          }
-          "ORT_LIB_LOCATION=$lib" >> $env:GITHUB_ENV
-          "ORT_PREFER_DYNAMIC_LINK=1" >> $env:GITHUB_ENV
-          $lib >> $env:GITHUB_PATH
-      - uses: actions/setup-node@v4
+        uses: ./.github/actions/onnxruntime-windows
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
       - run: npm ci && npm run build
