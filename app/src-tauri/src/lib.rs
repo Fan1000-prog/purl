@@ -1,7 +1,6 @@
 mod audio;
 mod ax_read;
 mod cleanup;
-mod cloud_llm;
 mod corrections;
 mod dictionary;
 pub mod engine;
@@ -9,14 +8,13 @@ mod fastclean;
 mod history;
 mod inject;
 mod learned;
-mod ollama_pull;
-mod secrets;
 mod settings;
 mod snippets;
 mod stats;
 mod structure;
 mod transcribe;
 mod transforms;
+mod untrusted;
 mod voice_commands;
 mod whisper_server;
 
@@ -30,7 +28,7 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use tauri_plugin_notification::NotificationExt;
 
 use audio::Recorder;
-use settings::{AiEngine, CleanupMode, InjectMode, Settings};
+use settings::{CleanupMode, InjectMode, Settings};
 
 /// Dictation is push-to-talk: hold the hotkey to record, release to
 /// transcribe. Releases faster than this are accidental taps — the recording
@@ -91,13 +89,6 @@ struct StatusPayload {
     whisper_bin_found: bool,
     whisper_model_found: bool,
     whisper_model_path: String,
-    ollama_up: bool,
-    ollama_model_found: bool,
-    ollama_model: String,
-    /// Lets the UI soften the Ollama rows: with a cloud engine selected a
-    /// stopped Ollama removes the fallback rung rather than breaking
-    /// cleanup outright.
-    ai_engine: String,
     accessibility_trusted: bool,
     hotkey: String,
     state: String,
@@ -119,24 +110,6 @@ fn load_dictionary(app: &AppHandle) -> dictionary::Dictionary {
 
 fn learned_path(app: &AppHandle) -> std::path::PathBuf {
     app_support_dir(app).join("learned.jsonl")
-}
-
-/// The privacy contract as one function, so both cleanup call sites in
-/// `run_pipeline` go through the same decision instead of each picking a
-/// dictionary by hand. `engine` names which backend this particular call is
-/// actually about to hit — the local-Ollama fallback that runs after a
-/// cloud failure passes `AiEngine::Local` here even though
-/// `settings.ai_engine` still says otherwise, because it is Ollama, not the
-/// cloud provider, that is about to receive the terms.
-fn llm_terms_for(
-    engine: AiEngine,
-    base: &dictionary::Dictionary,
-    local: &dictionary::Dictionary,
-) -> String {
-    match engine {
-        AiEngine::Local => local.llm_terms(),
-        _ => base.llm_terms(),
-    }
 }
 
 /// Append a timestamped line to the diagnostic log in the app data dir.
@@ -673,38 +646,10 @@ fn start_dictation(app: &AppHandle) {
             *state.recording_started.lock().unwrap() = Some(std::time::Instant::now());
             set_state(app, "recording");
             spawn_level_emitter(app.clone(), level);
-            // Warm Ollama (model load + prompt-prefix KV cache) while the
-            // user is speaking, so cleanup starts hot when they stop.
+            // Covers whisper-server crash/model-change since startup;
+            // spawning is instant and the model loads while they talk.
             let warm_app = app.clone();
-            std::thread::spawn(move || {
-                // Covers whisper-server crash/model-change since startup;
-                // spawning is instant and the model loads while they talk.
-                ensure_whisper_server(&warm_app);
-                let settings = warm_app
-                    .state::<AppState>()
-                    .settings
-                    .lock()
-                    .unwrap()
-                    .clone();
-                if settings.cleanup_mode == CleanupMode::Ai {
-                    let dictionary = load_dictionary(&warm_app);
-                    // Must match what `run_pipeline` sends to `cleanup::clean` for
-                    // the Local engine, or the KV-cache prefix misses and this
-                    // warm-up buys nothing (see the invariant note in cleanup.rs).
-                    let rules = if settings.learn_corrections {
-                        learned::load(&learned_path(&warm_app))
-                    } else {
-                        Vec::new()
-                    };
-                    let local_dictionary =
-                        dictionary.with_extra_terms(&learned::glossary_terms(&rules));
-                    cleanup::prewarm(
-                        &local_dictionary.llm_terms(),
-                        &settings.ollama_model,
-                        settings.structure_mode,
-                    );
-                }
-            });
+            std::thread::spawn(move || ensure_whisper_server(&warm_app));
         }
         Err(e) => {
             set_state(app, "idle");
@@ -817,21 +762,6 @@ fn run_transform(app: &AppHandle, t: transforms::Transform) {
 /// Copy selection → LLM rewrite → paste back, restoring the user's original
 /// clipboard on every path. Runs off the main thread.
 fn run_transform_pipeline(app: &AppHandle, t: &transforms::Transform) -> Result<(), String> {
-    let (engine, local_model) = {
-        let state = app.state::<AppState>();
-        let s = state.settings.lock().unwrap();
-        (s.ai_engine, s.ollama_model.clone())
-    };
-    let cloud = cloud_llm::CloudProvider::from_engine(engine).map(|provider| {
-        let model = app
-            .state::<AppState>()
-            .settings
-            .lock()
-            .unwrap()
-            .cloud_model(engine)
-            .to_string();
-        (provider, model)
-    });
     let t0 = std::time::Instant::now();
 
     let (selection, previous) =
@@ -840,15 +770,7 @@ fn run_transform_pipeline(app: &AppHandle, t: &transforms::Transform) -> Result<
         return Err("Select some text first, then press the transform hotkey.".into());
     };
 
-    // No local fallback: a transform is synchronous and the user is
-    // waiting, so a silent ~4s retry on the local model reads as a hang.
-    let attempt = match &cloud {
-        Some((provider, model)) => {
-            let key = secrets::get(provider.keychain_account()).unwrap_or_default();
-            cloud_llm::run_transform(&text, &t.prompt, *provider, model, &key)
-        }
-        None => transforms::run(&text, &t.prompt, &local_model),
-    };
+    let attempt = transforms::run(&text, &t.prompt);
     let out = match attempt {
         Ok(o) => o,
         Err(e) => {
@@ -882,15 +804,11 @@ fn run_pipeline(app: &AppHandle, recorder: Recorder, record_ms: u64) -> Result<(
     let dictionary = load_dictionary(app);
     let support = app_support_dir(app);
 
-    // Learned words bias the local model. `dictionary` stays
-    // untouched: it is what the cloud arm sends, and a user's corrected
-    // names must not leave the machine because they fixed a typo.
     let rules = if settings.learn_corrections {
         learned::load(&learned_path(app))
     } else {
         Vec::new()
     };
-    let local_dictionary = dictionary.with_extra_terms(&learned::glossary_terms(&rules));
 
     let wav = recorder
         .stop(&std::env::temp_dir())
@@ -941,75 +859,20 @@ fn run_pipeline(app: &AppHandle, recorder: Recorder, record_ms: u64) -> Result<(
 
     let t1 = std::time::Instant::now();
     let cleaned = match settings.cleanup_mode {
-        CleanupMode::Ai => match settings.ai_engine {
-            AiEngine::Local => cleanup::clean(
-                &raw,
-                &llm_terms_for(AiEngine::Local, &dictionary, &local_dictionary),
-                &settings.ollama_model,
-                settings.structure_mode,
-            ),
-            engine => {
-                // Unwrap is sound: the Local arm above is the only None case.
-                let provider = cloud_llm::CloudProvider::from_engine(engine)
-                    .expect("non-Local engine always maps to a provider");
-                let key = secrets::get(provider.keychain_account()).unwrap_or_default();
-                let cloud = cloud_llm::clean(
-                    &raw,
-                    &llm_terms_for(engine, &dictionary, &local_dictionary),
-                    provider,
-                    settings.cloud_model(engine),
-                    &key,
-                    settings.structure_mode,
-                );
-                if cloud.used_llm {
-                    cloud
-                } else {
-                    // Rung 2 of the ladder. The note must say cloud failed
-                    // AND local ran: silent degradation is exactly what
-                    // makes a bad key impossible for a user to diagnose.
-                    // `error_head` strips the provider's response body: the status
-                    // is what the user can act on, and the body is up to 200 bytes
-                    // of JSON that would land in a one-line paragraph in the UI.
-                    let why = cloud
-                        .note
-                        .as_deref()
-                        .map(|n| cloud_llm::error_head(n).to_string())
-                        .unwrap_or_else(|| "unknown error".into());
-                    log_line(
-                        app,
-                        &format!("cloud cleanup failed ({why}) -> local Ollama"),
-                    );
-                    let mut local = cleanup::clean(
-                        &raw,
-                        &llm_terms_for(AiEngine::Local, &dictionary, &local_dictionary),
-                        &settings.ollama_model,
-                        settings.structure_mode,
-                    );
-                    // Rung 3: if local did not run either, do not claim it did.
-                    local.note = Some(if local.used_llm {
-                        format!(
-                            "{} failed ({why}); cleaned locally instead",
-                            provider.label()
-                        )
-                    } else {
-                        format!(
-                            "{} and local cleanup both failed ({why}); pasted your words unchanged",
-                            provider.label()
-                        )
-                    });
-                    local
-                }
-            }
+        CleanupMode::Off => cleanup::CleanResult {
+            text: raw.clone(),
+            used_llm: false,
+            note: None,
         },
-        CleanupMode::Fast => cleanup::CleanResult {
+        CleanupMode::Fast | CleanupMode::LegacyAi => cleanup::CleanResult {
             text: fastclean::clean(&raw, &dictionary),
             used_llm: false,
             note: None,
         },
-        CleanupMode::Off => cleanup::CleanResult {
-            text: raw.clone(),
+        CleanupMode::Smart => cleanup::CleanResult {
+            text: fastclean::clean(&raw, &dictionary),
             used_llm: false,
-            note: Some("cleanup disabled in settings".into()),
+            note: Some("Smart cleanup isn't set up yet — used Fast".into()),
         },
     };
     let cleanup_ms = t1.elapsed().as_millis();
@@ -1184,19 +1047,9 @@ fn get_settings(state: tauri::State<AppState>) -> Settings {
 
 #[tauri::command]
 fn save_settings(app: AppHandle, new_settings: Settings) -> Result<(), String> {
-    // `load` sanitizes these, but nothing stopped a bad value from being
-    // persisted and used for the rest of the session.
-    if !settings::is_allowed_model(&new_settings.ollama_model) {
-        return Err(format!(
-            "Unknown local model: {}",
-            new_settings.ollama_model
-        ));
-    }
-    if !settings::is_allowed_cloud_model(&new_settings.claude_model)
-        || !settings::is_allowed_cloud_model(&new_settings.gemini_model)
-    {
-        return Err("Invalid cloud model id.".into());
-    }
+    // Same coercion as `load`, so a stale UI can't persist a value this
+    // version no longer runs.
+    let new_settings = new_settings.sanitized();
     let path = app_support_dir(&app).join("settings.json");
     new_settings.save(&path).map_err(|e| e.to_string())?;
 
@@ -1212,68 +1065,6 @@ fn save_settings(app: AppHandle, new_settings: Settings) -> Result<(), String> {
             .map_err(|e| format!("Couldn't register hotkey {new_hotkey}: {e}"))?;
     }
     Ok(())
-}
-
-/// Resolve an engine name from the frontend to a cloud provider. `local`
-/// is an error rather than a no-op: reaching key management with `local`
-/// means the UI routed wrongly, and silence would hide it.
-///
-/// Matched directly against the bare engine name the key commands send —
-/// there is no `engine:model` token to split here (that token is a
-/// frontend-only concept, see `engine-token.ts`), so a synthesized
-/// `"gemini:extra"` is simply an unrecognized name and errors out.
-fn provider_from_name(engine: &str) -> Result<cloud_llm::CloudProvider, String> {
-    match engine {
-        "claude" => Ok(cloud_llm::CloudProvider::Claude),
-        "gemini" => Ok(cloud_llm::CloudProvider::Gemini),
-        _ => Err(format!("\"{engine}\" is not a cloud engine.")),
-    }
-}
-
-#[tauri::command]
-fn set_cloud_api_key(engine: String, key: String) -> Result<(), String> {
-    let provider = provider_from_name(&engine)?;
-    let key = key.trim();
-    if key.is_empty() {
-        return Err("Paste your API key first.".into());
-    }
-    secrets::set(provider.keychain_account(), key)
-}
-
-/// Presence only. The key itself must never cross the IPC boundary.
-#[tauri::command]
-fn cloud_key_status(engine: String) -> bool {
-    match provider_from_name(&engine) {
-        Ok(provider) => secrets::has(provider.keychain_account()),
-        Err(_) => false,
-    }
-}
-
-#[tauri::command]
-fn clear_cloud_api_key(engine: String) -> Result<(), String> {
-    let provider = provider_from_name(&engine)?;
-    let account = provider.keychain_account();
-    secrets::delete(account)?;
-    // `delete` now surfaces a refused delete directly. This second check adds
-    // only the case where the item's own ACL blocks removal but still permits
-    // a read — it cannot detect a locked Keychain, because `has` would report
-    // absent there too.
-    if secrets::has(account) {
-        return Err(format!(
-            "Could not remove the {} key from your Keychain. Check Keychain Access and try again.",
-            provider.label()
-        ));
-    }
-    Ok(())
-}
-
-/// Verify a stored key and model with one tiny request.
-#[tauri::command]
-fn test_cloud_key(engine: String, model: String) -> Result<(), String> {
-    let provider = provider_from_name(&engine)?;
-    let key = secrets::get(provider.keychain_account())
-        .ok_or_else(|| format!("No {} key saved yet.", provider.label()))?;
-    cloud_llm::test_key(provider, &model, &key)
 }
 
 /// Outcome of a failed shortcut swap: the new combo was rejected, and the
@@ -1481,7 +1272,6 @@ fn get_status(app: AppHandle, state: tauri::State<AppState>) -> StatusPayload {
     let support = app_support_dir(&app);
     let model_path = settings.resolved_model_path(&support);
     let resource_dir = app.path().resource_dir().ok();
-    let (ollama_up, ollama_model_found) = cleanup::ollama_status(&settings.ollama_model);
     let app_state = if state.recorder.lock().unwrap().is_some() {
         "recording"
     } else if *state.processing.lock().unwrap() {
@@ -1493,45 +1283,10 @@ fn get_status(app: AppHandle, state: tauri::State<AppState>) -> StatusPayload {
         whisper_bin_found: transcribe::find_whisper_bin(resource_dir.as_deref()).is_ok(),
         whisper_model_found: model_path.is_file(),
         whisper_model_path: model_path.display().to_string(),
-        ollama_up,
-        ollama_model_found,
-        ollama_model: settings.ollama_model,
-        ai_engine: match settings.ai_engine {
-            AiEngine::Local => "local",
-            AiEngine::Claude => "claude",
-            AiEngine::Gemini => "gemini",
-        }
-        .into(),
         accessibility_trusted: inject::accessibility_trusted(),
         hotkey: settings.hotkey,
         state: app_state.into(),
     }
-}
-
-#[derive(serde::Serialize)]
-struct InstalledModels {
-    up: bool,
-    installed: Vec<String>,
-}
-
-#[tauri::command]
-fn list_installed_models() -> InstalledModels {
-    let (up, installed) = cleanup::installed_models();
-    InstalledModels { up, installed }
-}
-
-#[tauri::command]
-fn pull_ollama_model(app: AppHandle, model: String) -> Result<(), String> {
-    let model = model.trim().to_string();
-    if model.is_empty() {
-        return Err("Empty model name".into());
-    }
-    std::thread::spawn(move || {
-        ollama_pull::stream_pull(&model, |ev| {
-            let _ = app.emit("ollama-pull", ev);
-        });
-    });
-    Ok(())
 }
 
 #[tauri::command]
@@ -1741,16 +1496,10 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_settings,
             save_settings,
-            set_cloud_api_key,
-            cloud_key_status,
-            clear_cloud_api_key,
-            test_cloud_key,
             set_hotkey,
             suspend_hotkey,
             resume_hotkey,
             get_status,
-            list_installed_models,
-            pull_ollama_model,
             get_last_result,
             toggle_recording,
             cancel_dictation,
@@ -1981,52 +1730,6 @@ mod hotkey_swap_tests {
 }
 
 #[cfg(test)]
-mod cloud_command_tests {
-    use super::*;
-
-    #[test]
-    fn engine_name_maps_to_provider_or_errors() {
-        assert_eq!(
-            provider_from_name("gemini").unwrap(),
-            cloud_llm::CloudProvider::Gemini
-        );
-        assert_eq!(
-            provider_from_name("claude").unwrap(),
-            cloud_llm::CloudProvider::Claude
-        );
-        // "local" has no key to manage — an explicit error beats a silent no-op.
-        assert!(provider_from_name("local").is_err());
-        assert!(provider_from_name("nonsense").is_err());
-        // Malformed names must be rejected, not coerced. "gemini:extra" was
-        // accepted as Gemini when this resolved via parse_engine_model.
-        assert!(provider_from_name("gemini:extra").is_err());
-        assert!(provider_from_name("").is_err());
-        assert!(provider_from_name("Gemini").is_err()); // case-sensitive on purpose
-    }
-
-    /// The ladder's contract, checked at the piece that can be tested without
-    /// a running app: a cloud failure yields used_llm=false plus a note, which
-    /// is what the dispatch arm branches on.
-    #[test]
-    fn cloud_failure_is_detectable_and_explained() {
-        // Empty key short-circuits before any network call.
-        let r = cloud_llm::clean(
-            "um hello world",
-            "- SKU",
-            cloud_llm::CloudProvider::Gemini,
-            "gemini-3.5-flash-lite",
-            "",
-            settings::StructureMode::None,
-        );
-        assert!(!r.used_llm, "a keyless cloud call must not report success");
-        let note = r.note.expect("failure must carry a note");
-        assert!(note.contains("API key"), "note must name the cause: {note}");
-        // And the transcript survives regardless.
-        assert_eq!(r.text, "um hello world");
-    }
-}
-
-#[cfg(test)]
 mod learning_wiring_tests {
     use crate::dictionary::Dictionary;
     use crate::learned::{self, Rule};
@@ -2045,10 +1748,7 @@ mod learning_wiring_tests {
     }
 
     /// A learned word is present in the augmented dictionary's LLM-terms
-    /// output, and absent from the base dictionary's — the raw
-    /// material the privacy contract is built from. This does not exercise
-    /// `run_pipeline` itself; `llm_terms_for_picks_the_engine_appropriate_dictionary`
-    /// below pins the actual selection that decides what a cleanup call gets.
+    /// output, and absent from the base dictionary's.
     #[test]
     fn learned_terms_appear_in_the_augmented_dictionary_only() {
         let base = Dictionary::parse("SKU = stock keeping unit");
@@ -2057,35 +1757,6 @@ mod learning_wiring_tests {
 
         assert!(local.llm_terms().contains("Fan"));
         assert!(!base.llm_terms().contains("Fan"));
-    }
-
-    /// The privacy contract, pinned at the actual decision `run_pipeline`
-    /// calls: every cleanup call site goes through `llm_terms_for`, so this
-    /// exercises it directly rather than re-deriving the same assertion
-    /// against the `Dictionary` API alone. If the engine-to-dictionary mapping
-    /// is ever inverted — cloud getting learned terms, or Local losing them
-    /// — this fails; the earlier test above would not have caught that.
-    #[test]
-    fn llm_terms_for_picks_the_engine_appropriate_dictionary() {
-        let base = Dictionary::parse("SKU = stock keeping unit");
-        let rules = vec![rule("Fan")];
-        let local = base.with_extra_terms(&learned::glossary_terms(&rules));
-
-        assert!(
-            crate::llm_terms_for(crate::settings::AiEngine::Local, &base, &local).contains("Fan"),
-            "Local must get the learned term"
-        );
-        // The local-Ollama fallback after a cloud failure also passes
-        // AiEngine::Local here, even though settings.ai_engine says
-        // otherwise — this is the same call, so the same assertion covers it.
-        assert!(
-            !crate::llm_terms_for(crate::settings::AiEngine::Claude, &base, &local).contains("Fan"),
-            "a cloud engine must never get the learned term"
-        );
-        assert!(
-            !crate::llm_terms_for(crate::settings::AiEngine::Gemini, &base, &local).contains("Fan"),
-            "a cloud engine must never get the learned term"
-        );
     }
 
     #[test]

@@ -173,8 +173,6 @@ function install() {
     get_learned_rules: () => [],
     get_glossary: () => "",
     get_last_result: () => null,
-    cloud_key_status: () => false,
-    list_installed_models: () => ({ models: [] }),
     toggle_recording: () => null,
     "plugin:app|version": () => "0.9.0",
     "plugin:updater|check": () => null,
