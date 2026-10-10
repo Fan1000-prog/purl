@@ -174,7 +174,7 @@ a permission prompt that leads nowhere.
 
 - Bundle id `app.purl.desktop`; product name `Purl`.
 - Updater endpoint: `github.com/Fan1000-prog/purl/releases/latest/download/latest.json`,
-  with darwin-universal and windows-x86_64 entries, signed with a new Tauri
+  with darwin-aarch64 and windows-x86_64 entries, signed with a new Tauri
   updater key (private key stays out of the repo; CI reads it from a GitHub secret).
 - First launch does **not** migrate VendastaTalk settings or history. Separate
   app, separate data dir.
@@ -277,7 +277,7 @@ reviewed by a fresh reviewer agent before merge:
 ## Risks
 
 - **Parakeet on older Windows CPUs:** may run slower than real time. Windows uses Microsoft's
-  official CPU-only ONNX Runtime (no DirectML, no AVX2-only build) shipped as `onnxruntime.dll`
+  official CPU-only ONNX Runtime 1.28.0 (no DirectML, no AVX2-only build) shipped as `onnxruntime.dll`
   beside `purl.exe`.
 - **No Windows hardware in the loop:** CI smoke proves install + launch + engine
   health, not real paste into Chrome. Stated plainly in release notes.
