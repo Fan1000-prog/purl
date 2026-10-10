@@ -73,6 +73,8 @@ fn main() {
     let whisper_gpu = bench_whisper(&args.whisper_cli, &ggml, &scratch, &data, true);
     let whisper_cpu = bench_whisper(&args.whisper_cli, &ggml, &scratch, &data, false);
 
+    let mut machine = machine;
+    machine["load_avg_1m_at_end"] = json!(load_avg());
     let report = json!({
         "date": chrono::Local::now().format("%Y-%m-%d").to_string(),
         "machine": machine,
