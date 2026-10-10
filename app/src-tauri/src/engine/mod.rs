@@ -3,6 +3,7 @@
 pub mod download;
 pub mod llm;
 pub mod models;
+pub mod sidecar;
 pub mod stt;
 
 use models::{is_installed, model_dir, registry, Kind, ModelSpec};
