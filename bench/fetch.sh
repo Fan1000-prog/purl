@@ -38,18 +38,23 @@ if [ ! -d "$CACHE/LibriSpeech/test-clean" ]; then
 fi
 
 # First COUNT utterances by sorted id, from the per-chapter transcript files.
+# Same columns as bench/dictation/manifest.tsv; voice is the speaker id.
 refs="$CACHE/librispeech-100/manifest.tsv"
-find "$CACHE/LibriSpeech/test-clean" -name '*.trans.txt' -exec cat {} + \
-  | LC_ALL=C sort \
-  | awk -v n="$COUNT" 'NR <= n { id=$1; $1=""; sub(/^ /, ""); print id ".wav\t" $0 }' > "$refs"
+{
+  printf 'file\tsource\tvoice\ttext\n'
+  find "$CACHE/LibriSpeech/test-clean" -name '*.trans.txt' -exec cat {} + \
+    | LC_ALL=C sort \
+    | awk -v n="$COUNT" 'NR <= n { id=$1; split(id, p, "-"); $1=""; sub(/^ /, "");
+        print id ".wav\tLibriSpeech test-clean (CC-BY-4.0)\t" p[1] "\t" $0 }'
+} > "$refs"
 
-while IFS=$'\t' read -r wav _; do
+tail -n +2 "$refs" | while IFS=$'\t' read -r wav _; do
   id="${wav%.wav}"
   IFS=- read -r spk chap _ <<< "$id"
   out="$CACHE/librispeech-100/$wav"
   [ -f "$out" ] || to_wav16k "$CACHE/LibriSpeech/test-clean/$spk/$chap/$id.flac" "$out"
-done < "$refs"
-echo "LibriSpeech: $(wc -l < "$refs" | tr -d ' ') clips in $CACHE/librispeech-100"
+done
+echo "LibriSpeech: $(($(wc -l < "$refs") - 1)) clips in $CACHE/librispeech-100"
 
 # 2. whisper.cpp baseline model
 ggml="$CACHE/ggml-base.en.bin"

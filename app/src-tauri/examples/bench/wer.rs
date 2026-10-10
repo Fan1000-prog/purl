@@ -1,20 +1,35 @@
 //! Word error rate: word-level edit distance over the reference length,
 //! after lowercasing and dropping punctuation.
 
+#[cfg(test)]
 pub fn wer(reference: &str, hypothesis: &str) -> f64 {
-    let (r, h) = (words(reference), words(hypothesis));
-    if r.is_empty() {
-        return if h.is_empty() { 0.0 } else { 1.0 };
+    corpus_wer([(reference, hypothesis)])
+}
+
+/// Total word edits over total reference words, so long clips weigh more
+/// than short ones. An empty reference scores 1.0 if anything was heard.
+pub fn corpus_wer<'a>(pairs: impl IntoIterator<Item = (&'a str, &'a str)>) -> f64 {
+    let (mut edits, mut words) = (0, 0);
+    for (reference, hypothesis) in pairs {
+        let (r, h) = (words_of(reference), words_of(hypothesis));
+        edits += edit_distance(&r, &h);
+        words += r.len();
     }
-    edit_distance(&r, &h) as f64 / r.len() as f64
+    match (edits, words) {
+        (0, _) => 0.0,
+        (_, 0) => 1.0,
+        _ => edits as f64 / words as f64,
+    }
 }
 
 /// Lowercase words with punctuation removed. Apostrophes inside a word stay
-/// ("don't"), so contractions still count as one word.
-pub fn words(text: &str) -> Vec<String> {
+/// ("don't"), so contractions still count as one word; a curly one counts
+/// as straight.
+fn words_of(text: &str) -> Vec<String> {
     text.split_whitespace()
         .map(|w| {
             w.chars()
+                .map(|c| if c == '\u{2019}' { '\'' } else { c })
                 .filter(|c| c.is_alphanumeric() || *c == '\'')
                 .collect::<String>()
                 .trim_matches('\'')
@@ -25,7 +40,7 @@ pub fn words(text: &str) -> Vec<String> {
 }
 
 /// Levenshtein distance over words, one row at a time.
-pub fn edit_distance(a: &[String], b: &[String]) -> usize {
+fn edit_distance(a: &[String], b: &[String]) -> usize {
     let mut prev: Vec<usize> = (0..=b.len()).collect();
     for (i, wa) in a.iter().enumerate() {
         let mut row = vec![i + 1; b.len() + 1];
@@ -58,11 +73,18 @@ mod tests {
     fn wer_keeps_contractions_whole() {
         assert_eq!(wer("Don't stop.", "don't stop"), 0.0);
         assert!((wer("don't stop", "dont stop") - 0.5).abs() < 1e-9);
+        assert_eq!(wer("don't", "don\u{2019}t"), 0.0);
     }
 
     #[test]
     fn wer_counts_insertions() {
         assert!((wer("a b", "a x b y") - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn corpus_wer_weighs_by_length() {
+        let pairs = [("a b c d", "a b c d"), ("x", "y")];
+        assert!((corpus_wer(pairs) - 0.2).abs() < 1e-9);
     }
 
     #[test]
