@@ -8,6 +8,7 @@ mod fastclean;
 mod history;
 mod inject;
 mod learned;
+mod secure_random;
 mod settings;
 mod snippets;
 mod stats;
