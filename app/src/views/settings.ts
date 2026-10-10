@@ -9,6 +9,7 @@ import { mountModelDownload, formatBytes, type ModelDownload } from "../componen
 import { confirmButton } from "../components/confirm-button";
 import { getStatus } from "../status";
 import { onRadio, setRadio } from "../components/radio-group";
+import { LEARN_CORRECTIONS_HELP } from "../disclosure";
 import type { CleanupMode, ModelView } from "../types";
 
 const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
@@ -180,6 +181,7 @@ export function initSettings(s: Settings) {
   $<HTMLSelectElement>("structure-mode").value = s.structure_mode;
   $<HTMLInputElement>("command-detection").checked = s.command_detection;
   $<HTMLInputElement>("learn-corrections").checked = s.learn_corrections;
+  $("learn-help").textContent = LEARN_CORRECTIONS_HELP;
   bindSelect("inject-mode", "inject_mode");
   bindSelect("structure-mode", "structure_mode");
   bindToggle("command-detection", "command_detection");

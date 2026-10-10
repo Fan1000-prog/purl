@@ -238,3 +238,15 @@ test("radio groups: one Tab stop each, arrow keys move focus and select, wrappin
   await expect.poll(async () => (await calls(page, "save_settings")).at(-1)?.newSettings.cleanup_mode).toBe("fast");
 });
 
+test("the 90-second disclosure has one source: Settings help and the what's-new card", async ({ page }) => {
+  await open(page, "&models=ready&disclosed=0");
+  await expect(page.locator("#fn-learning")).toHaveText(
+    "Purl learns from you. Fix a misheard word right after dictating and it spells it your way next time. To notice the fix, Purl reads the text field it pasted into for up to 90 seconds after pasting (less once you stop editing). Password fields are never read, and you can turn this off in Settings.",
+  );
+  await expect(page.locator("#fn-learning strong")).toHaveText("Purl learns from you.");
+  await expect(page.locator("#learn-help")).toHaveText(
+    "After pasting, Purl reads that text field for up to 90 seconds (less once you stop editing) to notice words you fix by hand. Only the fixed word and its neighbours are kept, on this Mac. Password fields are never read.",
+  );
+  const html = await (await page.request.get("/index.html")).text();
+  expect(html).not.toContain("90 seconds");
+});
