@@ -1099,45 +1099,6 @@ button.wiz-primary:disabled { background: var(--ink-3); border-color: var(--ink-
   opacity: 1;
 }
 
-/* Cleanup-model install status + download progress */
-.model-status {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  font-size: 13px;
-  color: var(--muted, #666);
-  min-height: 24px;
-}
-.model-status .ok {
-  color: #1a7f37;
-}
-.model-status button {
-  cursor: pointer;
-}
-.model-status .bar {
-  flex: 1;
-  height: 6px;
-  border-radius: 3px;
-  background: rgba(0, 0, 0, 0.1);
-  overflow: hidden;
-  max-width: 220px;
-}
-.model-status .bar > span {
-  display: block;
-  height: 100%;
-  width: 0%;
-  background: #1a7f37;
-  transition: width 0.2s ease;
-}
-.model-status .err {
-  color: #b42318;
-}
-@media (prefers-color-scheme: dark) {
-  .model-status .bar {
-    background: rgba(255, 255, 255, 0.15);
-  }
-}
-
 /* ---------- celebrate: confetti + toast for meaningful moments ---------- */
 
 #celebrate-root {
