@@ -4,6 +4,7 @@ mod cleanup;
 mod cloud_llm;
 mod corrections;
 mod dictionary;
+pub mod engine;
 mod fastclean;
 mod history;
 mod inject;
@@ -63,6 +64,8 @@ struct AppState {
     /// otherwise an older watcher that outlives a newer one could flip the
     /// indicator back and forth behind the newer one's back.
     correction_watch_gen: std::sync::atomic::AtomicU64,
+    /// Model downloads in flight, with their cancel flags and last errors.
+    downloads: engine::Downloads,
 }
 
 #[derive(Default)]
@@ -1627,6 +1630,95 @@ fn clear_learned_rules(app: AppHandle) -> Result<(), String> {
     learned::clear(&learned_path(&app)).map_err(|e| e.to_string())
 }
 
+// ---- Models: registry status and downloads ----
+
+#[derive(Clone, Serialize)]
+struct ModelProgressEvent {
+    id: &'static str,
+    downloaded_bytes: u64,
+    size_bytes: u64,
+}
+
+#[derive(Clone, Serialize)]
+struct ModelDoneEvent {
+    id: &'static str,
+    ok: bool,
+    error: Option<String>,
+}
+
+#[tauri::command]
+fn models_status(app: AppHandle, state: tauri::State<AppState>) -> Vec<engine::ModelView> {
+    state.downloads.views(&app_support_dir(&app))
+}
+
+/// Starts the download on its own thread and returns at once; progress and
+/// the outcome arrive as `model-progress` / `model-done` events. A second
+/// call while that model is already downloading is a no-op.
+#[tauri::command]
+fn download_model(app: AppHandle, state: tauri::State<AppState>, id: String) -> Result<(), String> {
+    let spec = engine::models::find(&id).ok_or_else(|| format!("Unknown model {id}"))?;
+    let Some(cancel) = state.downloads.try_start(spec.id) else {
+        return Ok(());
+    };
+    let app_data = app_support_dir(&app);
+    std::thread::spawn(move || {
+        let result = engine::download::download_model(spec, &app_data, &cancel, &mut |p| {
+            let _ = app.emit(
+                "model-progress",
+                ModelProgressEvent {
+                    id: spec.id,
+                    downloaded_bytes: p.downloaded,
+                    size_bytes: p.total,
+                },
+            );
+        });
+        let error = result.err().map(|e| e.to_string());
+        log_line(
+            &app,
+            &format!(
+                "model {}: download {}",
+                spec.id,
+                error.as_deref().unwrap_or("ok")
+            ),
+        );
+        app.state::<AppState>()
+            .downloads
+            .finish(spec.id, error.clone());
+        let _ = app.emit(
+            "model-done",
+            ModelDoneEvent {
+                id: spec.id,
+                ok: error.is_none(),
+                error,
+            },
+        );
+    });
+    Ok(())
+}
+
+#[tauri::command]
+fn cancel_download(state: tauri::State<AppState>, id: String) {
+    state.downloads.cancel(&id);
+}
+
+/// Removes a model's folder, `.part` files included. Engines register the
+/// models they have loaded in Tasks 5/6; until then only an in-flight
+/// download blocks deletion.
+#[tauri::command]
+fn delete_model(app: AppHandle, state: tauri::State<AppState>, id: String) -> Result<(), String> {
+    let spec = engine::models::find(&id).ok_or_else(|| format!("Unknown model {id}"))?;
+    if state.downloads.is_running(spec.id) {
+        return Err("Cancel the download first".into());
+    }
+    let dir = engine::models::model_dir(&app_support_dir(&app), spec.id);
+    match std::fs::remove_dir_all(&dir) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.to_string()),
+        _ => {}
+    }
+    state.downloads.clear_error(spec.id);
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1669,7 +1761,11 @@ pub fn run() {
             clear_learned_rules,
             get_transforms,
             save_transforms,
-            reset_transforms
+            reset_transforms,
+            models_status,
+            download_model,
+            cancel_download,
+            delete_model
         ])
         .setup(|app| {
             // Load persisted settings before anything uses them.
