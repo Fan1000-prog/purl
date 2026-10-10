@@ -86,8 +86,8 @@ UI (TS)  ──invoke/events──▶  lib.rs commands
 
 - **Pipeline** is platform-blind and engine-blind: it takes `&dyn SttEngine` /
   `&dyn LlmEngine` and is tested with fakes.
-- **Engines** speak to sidecars over localhost HTTP/WebSocket only, bound to
-  `127.0.0.1` on a random free port. Never `0.0.0.0`.
+- **STT** runs in-process. **LLM** runs as a `llama-server` sidecar spoken to over
+  localhost HTTP only, bound to `127.0.0.1` on a random free port. Never `0.0.0.0`.
 - **Platform** traits come from the 2026-08-14 Windows port spec, minus
   `SecretStore` (no secrets left to store).
 
@@ -107,14 +107,17 @@ cleanup and pastes; it never blocks the paste on the LLM.
 
 ### Speech-to-text
 
-- Runtime: **sherpa-onnx** prebuilt `-no-tts` binaries (Apache-2.0), offline
-  websocket server, bundled as Tauri resources per platform/arch.
-- Model: **parakeet-tdt-0.6b-v3 int8** (~680 MB, 25 European languages,
-  CC-BY-4.0 — attribution in README and About). Downloaded in onboarding.
-- Windows: bundle ONNX Runtime under a renamed DLL and patch imports, as
-  OpenWhispr does, because Windows 11 ships an older `onnxruntime.dll` in
-  System32 that can be loaded instead. CI fails the Windows build if the
-  bare-named DLL is present.
+- Runtime: **`transcribe-rs`** (MIT, `features = ["onnx"]`), in-process via ONNX
+  Runtime (`ort`). Same approach as Handy (Tauri + Rust, MIT), proven on macOS and
+  Windows. No sidecar process, no websocket, no DLL renaming. *(Amended
+  2026-10-09; replaces the sherpa-onnx sidecar.)*
+- Model: **parakeet-tdt-0.6b-v3 int8** in ONNX form from Hugging Face
+  `istupakov/parakeet-tdt-0.6b-v3-onnx` — four files, ~670 MB
+  (`encoder-model.int8.onnx`, `decoder_joint-model.int8.onnx`, `nemo128.onnx`,
+  `vocab.txt`). 25 European languages, CC-BY-4.0 — attribution in README and
+  About. Downloaded in onboarding.
+- The loaded model stays resident between dictations and is dropped after 15 idle
+  minutes; loading runs on a background thread so the UI never blocks.
 - Long audio is segmented at ≤30 s on silence boundaries before decode.
 - whisper.cpp, `whisper_server.rs` and Homebrew lookups are deleted.
 
@@ -217,7 +220,7 @@ a permission prompt that leads nowhere.
   (local HTTP fixture server: resume, checksum, 404, truncated), LLM output guard,
   `Trust` call sites, key mapping per platform.
 - **Integration** (`cargo test -- --ignored`, CI nightly + before release):
-  real sherpa-onnx + Parakeet on fixture WAVs; real llama-server + Qwen on fixture
+  real transcribe-rs + Parakeet on fixture WAVs; real llama-server + Qwen on fixture
   transcripts.
 - **Accuracy benchmark** (`bench/`): fixed public-domain clip set (LibriSpeech
   test-clean subset, CC-BY-4.0) plus 10 recorded dictation-style clips; reports
