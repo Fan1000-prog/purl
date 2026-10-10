@@ -39,12 +39,11 @@ const GRAPHICS = [
 const HERO_TEXT = ["text", "muted", "accent"];
 const HERO_FIELDS = ["field-a", "field-b"];
 
-// The overlay pins the light palette (.theme-light): checked in light only.
+// The overlay is always dark (.theme-dark): checked in dark only. The pill
+// itself is the brand component, checked by the brand's own contrast test.
 const OVERLAY_PAIRS = [
-  ["ink", "paper", "pill label"],
-  ["warn-text", "paper", "pill error label"],
-  ["ink", "cream", "cancel button"],
-  ["paper", "fern", "confirm button"],
+  ["text", "surface", "cancel button"],
+  ["night", "signal", "confirm button"],
 ];
 
 const STYLESHEETS = ["src/styles/tokens.css", "src/styles/base.css", "src/styles/onboarding.css", "src/styles.css", "overlay.html"];
@@ -150,7 +149,7 @@ for (const theme of ["dark", "light"]) {
     }
   }
 }
-check("light", OVERLAY_PAIRS, AA_TEXT);
+check("dark", OVERLAY_PAIRS, AA_TEXT);
 
 // Every foreground colour in the stylesheets must be one checked above.
 const checked = new Set([...PAIRS, ...OVERLAY_PAIRS].map(([fg]) => fg));
