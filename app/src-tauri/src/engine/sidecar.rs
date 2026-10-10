@@ -73,8 +73,8 @@ pub fn free_port() -> io::Result<u16> {
 /// A random API key for one server run, so other local processes (or a web
 /// page poking at localhost) can't use it: 128 bits from the OS CSPRNG.
 /// Never logged, never put in an error.
-pub fn api_key() -> String {
-    crate::secure_random::hex(16)
+pub fn api_key() -> io::Result<String> {
+    crate::secure_random::random_hex(16).map_err(io::Error::other)
 }
 
 pub struct Sidecar {
@@ -226,7 +226,7 @@ pub fn verify_identity(port: u16, api_key: &str, model: &Path) -> io::Result<()>
             .send()
             .map_err(|e| not_ours(&format!("no answer ({})", e.without_url())))
     };
-    let wrong = props(&crate::secure_random::hex(16))?;
+    let wrong = props(&self::api_key()?)?;
     if wrong.status() != reqwest::StatusCode::UNAUTHORIZED {
         return Err(not_ours(&format!(
             "it accepted a wrong key ({})",
@@ -456,7 +456,7 @@ mod tests {
 
     #[test]
     fn api_keys_are_128_random_bits() {
-        let (a, b) = (api_key(), api_key());
+        let (a, b) = (api_key().unwrap(), api_key().unwrap());
         assert_eq!(a.len(), 32);
         assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
         assert_ne!(a, b);

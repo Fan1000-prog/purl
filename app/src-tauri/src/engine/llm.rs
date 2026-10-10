@@ -138,7 +138,7 @@ impl Server for LlamaServer {
 fn launch(bin: &Path, model: &Path, pid_file: Option<&Path>) -> Result<Arc<dyn Server>, String> {
     let mut last = String::new();
     for _ in 0..2 {
-        let key = api_key();
+        let key = api_key().map_err(|e| format!("Smart engine couldn't start: {e}"))?;
         match Sidecar::spawn_llama(bin, model, &key, pid_file) {
             Ok(sidecar) => {
                 let client = loopback_client(Duration::from_secs(60)).map_err(|e| e.to_string())?;
