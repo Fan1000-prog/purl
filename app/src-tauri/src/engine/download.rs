@@ -32,6 +32,22 @@ pub enum DownloadError {
     Stopped,
 }
 
+impl DownloadError {
+    /// A stable name for the failure, so the UI can pick its own wording or
+    /// action (e.g. "free up space") without parsing the message.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            DownloadError::DiskFull { .. } => "disk_full",
+            DownloadError::Offline => "offline",
+            DownloadError::Http(_) => "http",
+            DownloadError::Checksum => "checksum",
+            DownloadError::Cancelled => "cancelled",
+            DownloadError::Io(_) => "io",
+            DownloadError::Stopped => "unknown",
+        }
+    }
+}
+
 impl From<std::io::Error> for DownloadError {
     fn from(e: std::io::Error) -> Self {
         DownloadError::Io(e.to_string())
@@ -290,6 +306,28 @@ mod tests {
             DownloadError::Http(503).to_string(),
             "The download server said 503. Press Retry in a minute."
         );
+    }
+
+    #[test]
+    fn kind_names_each_failure_for_the_ui() {
+        let cases = [
+            (
+                DownloadError::DiskFull {
+                    need_mb: 1,
+                    have_mb: 0,
+                },
+                "disk_full",
+            ),
+            (DownloadError::Offline, "offline"),
+            (DownloadError::Http(500), "http"),
+            (DownloadError::Checksum, "checksum"),
+            (DownloadError::Cancelled, "cancelled"),
+            (DownloadError::Io("x".into()), "io"),
+            (DownloadError::Stopped, "unknown"),
+        ];
+        for (error, kind) in cases {
+            assert_eq!(error.kind(), kind, "{error:?}");
+        }
     }
 
     #[test]

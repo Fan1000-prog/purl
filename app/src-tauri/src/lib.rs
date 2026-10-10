@@ -1644,6 +1644,21 @@ struct ModelDoneEvent {
     id: &'static str,
     ok: bool,
     error: Option<String>,
+    /// `DownloadError::kind`; None when ok.
+    kind: Option<&'static str>,
+}
+
+fn model_done(
+    id: &'static str,
+    result: &Result<(), engine::download::DownloadError>,
+) -> ModelDoneEvent {
+    let failure = result.as_ref().err();
+    ModelDoneEvent {
+        id,
+        ok: failure.is_none(),
+        error: failure.map(|e| e.to_string()),
+        kind: failure.map(|e| e.kind()),
+    }
 }
 
 #[tauri::command]
@@ -1672,7 +1687,8 @@ fn download_model(app: AppHandle, state: tauri::State<AppState>, id: String) -> 
                 },
             );
         });
-        let error = result.err().map(|e| e.to_string());
+        let done = model_done(spec.id, &result);
+        let error = done.error.clone();
         log_line(
             &app,
             &format!(
@@ -1681,17 +1697,8 @@ fn download_model(app: AppHandle, state: tauri::State<AppState>, id: String) -> 
                 error.as_deref().unwrap_or("ok")
             ),
         );
-        app.state::<AppState>()
-            .downloads
-            .finish(spec.id, error.clone());
-        let _ = app.emit(
-            "model-done",
-            ModelDoneEvent {
-                id: spec.id,
-                ok: error.is_none(),
-                error,
-            },
-        );
+        app.state::<AppState>().downloads.finish(spec.id, error);
+        let _ = app.emit("model-done", done);
     });
     Ok(())
 }
@@ -1882,6 +1889,33 @@ pub fn run() {
                 app.state::<AppState>().whisper_server.lock().unwrap().take();
             }
         });
+}
+
+#[cfg(test)]
+mod model_done_tests {
+    use super::model_done;
+    use crate::engine::download::DownloadError;
+
+    #[test]
+    fn success_has_no_error_or_kind() {
+        let json = serde_json::to_value(model_done("parakeet-v3", &Ok(()))).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({"id": "parakeet-v3", "ok": true, "error": null, "kind": null})
+        );
+    }
+
+    #[test]
+    fn failure_carries_message_and_kind() {
+        let json =
+            serde_json::to_value(model_done("qwen3.5-2b", &Err(DownloadError::Offline))).unwrap();
+        assert_eq!(json["ok"], false);
+        assert_eq!(json["kind"], "offline");
+        assert_eq!(
+            json["error"],
+            "You're offline. Connect to the internet and press Retry."
+        );
+    }
 }
 
 #[cfg(test)]
