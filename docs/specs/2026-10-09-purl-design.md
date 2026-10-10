@@ -269,7 +269,7 @@ reviewed by a fresh reviewer agent before merge:
 |---|---|
 | Engine SWE | `engine/` (ModelStore, transcribe-rs STT, llama-server LLM), delete whisper/Ollama/BYOK |
 | Platform SWE | `platform/` traits, Windows injector/locator/overlay, CI matrix, installers |
-| App designer + FE | Tokens, mascot states, onboarding, all screens |
+| App designer + FE | Brand v2 tokens in the app, overlay states, onboarding, all screens |
 | Web designer + FE | `purl-site` landing page |
 | QA engineer | Edge-case matrix, benchmark runs, Playwright smoke |
 | Reviewer | Fresh per PR |
