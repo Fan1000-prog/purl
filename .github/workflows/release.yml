@@ -162,6 +162,11 @@ jobs:
           for ($i = 0; $i -lt 30 -and (Test-Path $exe); $i++) { Start-Sleep 1 }
           if (Test-Path $exe) { throw "uninstall left $exe behind" }
 
+      - name: Remove the signing keychain
+        if: always() && runner.os == 'macOS'
+        run: |
+          if [[ -n "${PURL_KEYCHAIN:-}" ]]; then security delete-keychain "$PURL_KEYCHAIN" || true; fi
+
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: purl-${{ matrix.target }}

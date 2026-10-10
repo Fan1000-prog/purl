@@ -27,6 +27,11 @@ pre-releases: those links (and the in-app updater) only see a published,
 non-pre-release version. To try a release candidate, use
 `.../releases/download/v0.9.0-rc.1/<asset>` instead.
 
+An `-rc` build reports the plain version from `tauri.conf.json` (a
+`v0.9.0-rc.1` build says `0.9.0`). The updater only offers a *newer*
+version, so people on an rc are **not** offered the final `0.9.0` release.
+They have to install it by hand, or wait for `0.9.1`.
+
 The workflow can also be started by hand (**Actions → release → Run
 workflow**, once it is on `main`). A manual run builds and smoke-tests with a
 throwaway macOS certificate and no updater key, keeps the installers as
@@ -60,6 +65,12 @@ prompt on first open.
 **Keep the certificate.** If it is lost and replaced, every user has to grant
 Accessibility again after the next update. Save the `.p12` and its password
 in your password manager.
+
+**Keep the updater key too.** Back up `~/.tauri/purl.key` in your password
+manager as well. Installed copies trust only the public key built into them,
+so if the private key is lost, they can never update themselves again. Never
+replace the key without first shipping a release that people install by hand,
+and that release must carry the new public key.
 
 ### 1. Create the certificate (Mac, Keychain Access)
 
@@ -142,7 +153,8 @@ Then move `purl-signing.p12` off the Desktop and into your password manager.
    ```
 
 3. Watch the run: `gh run watch --repo Fan1000-prog/purl`. Both build jobs
-   must pass their smoke test, then `manifest` uploads `latest.json`.
+   must pass their smoke test. Then `publish` creates the draft release and
+   uploads the installers, updater files and `latest.json`.
 4. Open the draft under **Releases**, check the assets listed above are all
    there, edit the notes (say plainly that Windows has only been smoke-tested
    on CI until someone tries it on real hardware), and publish.
