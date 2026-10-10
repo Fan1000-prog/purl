@@ -1,9 +1,13 @@
+// "Learned from your fixes" on the Dictionary screen: corrections Purl picked
+// up by reading the field it pasted into. macOS only in v1, so the section is
+// hidden where learning isn't supported.
+
 import { invoke } from "@tauri-apps/api/core";
 import type { LearnedRule } from "../types";
-import { onViewShow } from "../main";
+import { confirmButton } from "../components/confirm-button";
+import { getStatus } from "../status";
 
-const $ = <T extends HTMLElement>(id: string): T =>
-  document.getElementById(id) as T;
+const $ = <T extends HTMLElement>(id: string): T => document.getElementById(id) as T;
 
 let rules: LearnedRule[] = [];
 
@@ -13,98 +17,81 @@ function phrase(r: LearnedRule): string {
   return [before, r.to, r.after].filter(Boolean).join(" ");
 }
 
-// All content set via textContent — never innerHTML.
+function showError(text: string) {
+  const el = $("learned-msg");
+  el.textContent = text;
+  el.classList.toggle("hidden", text === "");
+}
+
+// All content set via textContent, never innerHTML.
 function renderItem(r: LearnedRule): HTMLLIElement {
   const li = document.createElement("li");
-  li.className = "snippet-item";
+  li.className = "list-item list-row";
 
   const heard = document.createElement("span");
-  heard.className = "snippet-trigger";
-  heard.textContent = `"${r.from}"`;
-  li.appendChild(heard);
-
-  const arrow = document.createElement("span");
-  arrow.className = "muted";
-  arrow.textContent = "→";
-  li.appendChild(arrow);
-
+  heard.className = "muted";
+  heard.textContent = `"${r.from}" →`;
   const fixed = document.createElement("span");
-  fixed.className = "snippet-expansion";
+  fixed.className = "item-main";
   fixed.textContent = phrase(r);
-  li.appendChild(fixed);
+  li.append(heard, fixed);
 
   if (!r.active) {
     const pending = document.createElement("span");
     pending.className = "muted";
-    pending.textContent = "· learns after one more";
-    pending.title =
-      "Corrections that could be a one-off edit start applying once they've been made twice.";
-    li.appendChild(pending);
+    pending.textContent = "applies after one more fix";
+    li.append(pending);
   }
 
   const del = document.createElement("button");
-  del.className = "ghost";
+  del.className = "btn btn-quiet";
   del.type = "button";
   del.textContent = "Forget";
   del.addEventListener("click", () => {
-    // Locate by reference at click time — never trust the render-time index.
+    // Locate by reference at click time, never the render-time index.
     const i = rules.indexOf(r);
     if (i === -1) return;
     rules.splice(i, 1);
     render(); // optimistic
     invoke("delete_learned_rule", { from: r.from, to: r.to, before: r.before })
-      .then(refresh)
+      .then(refreshLearning)
       .catch((err) => {
-        $<HTMLSpanElement>("learned-msg").textContent = String(err);
-        void refresh(); // reconverge with disk truth
+        showError(String(err));
+        void refreshLearning(); // reconverge with disk truth
       });
   });
-  li.appendChild(del);
-
+  li.append(del);
   return li;
 }
 
 function render(): void {
-  $<HTMLUListElement>("learned-list").replaceChildren(...rules.map(renderItem));
-  $<HTMLParagraphElement>("learned-empty").classList.toggle(
-    "hidden",
-    rules.length > 0,
-  );
+  $("learned-list").replaceChildren(...rules.map(renderItem));
+  $("learned-empty").classList.toggle("hidden", rules.length > 0);
+  $("learned-clear").hidden = rules.length === 0;
 }
 
-async function refresh(): Promise<void> {
-  rules = await invoke<LearnedRule[]>("get_learned_rules");
-  render();
+export async function refreshLearning(): Promise<void> {
+  try {
+    rules = await invoke<LearnedRule[]>("get_learned_rules");
+    showError("");
+    render();
+  } catch (err) {
+    rules = [];
+    $("learned-list").replaceChildren();
+    $("learned-empty").classList.add("hidden");
+    showError(`Couldn't load learned corrections (${String(err)}).`);
+  }
 }
 
 export function initLearning(): void {
-  const clearBtn = $<HTMLButtonElement>("learned-clear");
-  const defaultLabel = clearBtn.textContent ?? "Clear all";
-  let armed = false;
-  let armTimer: ReturnType<typeof setTimeout> | undefined;
-
-  // WKWebView can silently no-op window.confirm(), so confirm on the button
-  // itself — the same two-step the Clear history button uses.
-  clearBtn.addEventListener("click", () => {
-    if (!armed) {
-      armed = true;
-      clearBtn.textContent = "Forget every correction?";
-      armTimer = setTimeout(() => {
-        armed = false;
-        clearBtn.textContent = defaultLabel;
-      }, 4000);
-      return;
-    }
-    clearTimeout(armTimer);
-    armed = false;
-    clearBtn.textContent = defaultLabel;
+  confirmButton($("learned-clear"), "Forget every correction?", () => {
     invoke("clear_learned_rules")
-      .then(refresh)
-      .catch((err) => {
-        $<HTMLSpanElement>("learned-msg").textContent = String(err);
-      });
+      .then(refreshLearning)
+      .catch((err) => showError(String(err)));
   });
-
-  onViewShow("settings", () => void refresh().catch(() => {}));
-  void refresh().catch(() => {});
+  void getStatus().then(
+    (s) => ($("learned-section").hidden = !s.learningSupported),
+    () => {},
+  );
+  void refreshLearning();
 }
