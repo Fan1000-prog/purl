@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { getSettings, setCurrentHotkey, prettyHotkey } from "../main";
 import { celebrate } from "../celebrate";
+import { platform } from "../platform";
 
 export const DEFAULT_HOTKEY = "CmdOrCtrl+Shift+Space";
 
@@ -100,17 +101,17 @@ export function createHotkeyRecorder(opts?: HotkeyRecorderOpts): HTMLElement {
 
   const change = document.createElement("button");
   change.type = "button";
-  change.className = "ghost";
+  change.className = "btn";
   change.textContent = "Change";
 
   const hint = document.createElement("span");
-  hint.className = "meta";
+  hint.className = "recorder-hint muted";
 
   root.append(chip, change);
   if (defaultHotkey !== null) {
     const reset = document.createElement("button");
     reset.type = "button";
-    reset.className = "linklike";
+    reset.className = "btn btn-quiet";
     reset.textContent = "Reset to default";
     reset.addEventListener("click", () => {
       hint.textContent = "";
@@ -121,7 +122,7 @@ export function createHotkeyRecorder(opts?: HotkeyRecorderOpts): HTMLElement {
   if (opts?.allowClear) {
     const clear = document.createElement("button");
     clear.type = "button";
-    clear.className = "linklike";
+    clear.className = "btn btn-quiet";
     clear.textContent = "Remove";
     clear.addEventListener("click", () => {
       hint.textContent = "";
@@ -178,7 +179,10 @@ export function createHotkeyRecorder(opts?: HotkeyRecorderOpts): HTMLElement {
     const acc = eventToAccelerator(e);
     if (acc === null) return; // bare modifier — keep waiting
     if (acc === "needs-modifier") {
-      hint.textContent = "Add a modifier — ⌘, ⌃, ⌥ or ⇧ (with ⇧/⌥ for combos macOS reserves, like ⌘Space).";
+      hint.textContent =
+        platform() === "windows"
+          ? "Add a modifier: Ctrl, Alt or Shift."
+          : "Add a modifier: ⌘, ⌃, ⌥ or ⇧ (with ⇧ or ⌥ for combos macOS reserves, like ⌘Space).";
       return;
     }
     save(acc);

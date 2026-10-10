@@ -1,25 +1,38 @@
-// WCAG AA check for every text/background pair the design tokens promise,
-// in both themes. Reads the values straight from src/styles/tokens.css so the
-// test can't drift from the stylesheet. Run: node tests/contrast.mjs
+// WCAG AA check for every text/background pair the UI actually uses, in both
+// themes. Values come straight from src/styles/tokens.css, and every
+// `color: var(--x)` in the stylesheets must name a foreground listed here,
+// so a new text colour can't ship unchecked. Run: node tests/contrast.mjs
 
 import { readFileSync } from "node:fs";
 
 const AA_TEXT = 4.5;
+const read = (path) => readFileSync(new URL(`../${path}`, import.meta.url), "utf8");
 
-// [text token, background token]
+// [text token, background token, where it's used]
 const PAIRS = [
-  ["text", "bg"],
-  ["text", "surface"],
-  ["muted", "bg"],
-  ["muted", "surface"],
-  ["accent", "bg"],
-  ["accent", "surface"],
-  ["accent-ink", "accent"],
-  ["warn-text", "bg"],
-  ["warn-text", "surface"],
+  ["text", "bg", "body copy, list rows inside panels"],
+  ["text", "surface", "panels, cards, inputs, kbd, toasts"],
+  ["muted", "bg", "nav, ledes, empty states, segmented options"],
+  ["muted", "surface", "help text, meta rows, stat labels, quiet buttons"],
+  ["accent", "bg", "links, focus rings"],
+  ["accent", "surface", "Ready / Allowed status"],
+  ["accent-ink", "accent", "primary buttons, selected segment"],
+  ["warn-text", "bg", "pipeline errors on Home"],
+  ["warn-text", "surface", "error states, failed downloads, armed buttons"],
+  ["bg", "text", "Start dictation while recording (inverted)"],
 ];
 
-const css = readFileSync(new URL("../src/styles/tokens.css", import.meta.url), "utf8");
+// The overlay pins the light palette (.theme-light): checked in light only.
+const OVERLAY_PAIRS = [
+  ["ink", "paper", "pill label"],
+  ["warn-text", "paper", "pill error label"],
+  ["ink", "cream", "cancel button"],
+  ["paper", "fern", "confirm button"],
+];
+
+const STYLESHEETS = ["src/styles/tokens.css", "src/styles/base.css", "src/styles/onboarding.css", "src/styles.css", "overlay.html"];
+
+const css = read("src/styles/tokens.css");
 
 function declarations(block) {
   const vars = {};
@@ -27,16 +40,16 @@ function declarations(block) {
   return vars;
 }
 
-function blockAfter(marker) {
-  const at = css.indexOf(marker);
-  if (at < 0) throw new Error(`tokens.css: "${marker}" not found`);
-  const open = css.indexOf("{", at + marker.length);
-  const close = css.indexOf("}", open);
-  return css.slice(open + 1, close);
+/** The declarations of the first rule whose selector list starts with `selector`. */
+function block(selector) {
+  const at = css.search(new RegExp(`^\\s*${selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`, "m"));
+  if (at < 0) throw new Error(`tokens.css: no rule starting "${selector}"`);
+  const open = css.indexOf("{", at);
+  return css.slice(open + 1, css.indexOf("}", open));
 }
 
-const light = declarations(blockAfter(".theme-light"));
-const dark = { ...light, ...declarations(blockAfter(":root:not(.theme-light)")) };
+const light = declarations(block(":root,"));
+const dark = { ...light, ...declarations(block(":root:not(.theme-light)")) };
 
 function resolve(vars, name, seen = new Set()) {
   if (seen.has(name)) throw new Error(`cycle at --${name}`);
@@ -63,17 +76,31 @@ function contrast(a, b) {
 }
 
 let failures = 0;
-for (const [theme, vars] of [["light", light], ["dark", dark]]) {
-  for (const [fg, bg] of PAIRS) {
+function check(theme, vars, pairs) {
+  for (const [fg, bg, use] of pairs) {
     const ratio = contrast(resolve(vars, fg), resolve(vars, bg));
     const ok = ratio >= AA_TEXT;
     if (!ok) failures++;
-    console.log(`${ok ? "pass" : "FAIL"}  ${theme.padEnd(5)}  --${fg} on --${bg}  ${ratio.toFixed(2)}:1`);
+    console.log(`${ok ? "pass" : "FAIL"}  ${theme.padEnd(5)}  --${fg} on --${bg}  ${ratio.toFixed(2)}:1  (${use})`);
+  }
+}
+check("light", light, PAIRS);
+check("dark", dark, PAIRS);
+check("light", light, OVERLAY_PAIRS);
+
+// Every foreground colour in the stylesheets must be one checked above.
+const checked = new Set([...PAIRS, ...OVERLAY_PAIRS].map(([fg]) => fg));
+for (const file of STYLESHEETS) {
+  for (const [, name] of read(file).matchAll(/(?:^|[^-\w])color:\s*var\(--([\w-]+)\)/g)) {
+    if (!checked.has(name)) {
+      failures++;
+      console.log(`FAIL  ${file}: color: var(--${name}) is not in PAIRS`);
+    }
   }
 }
 
 if (failures) {
-  console.error(`\n${failures} pair(s) below WCAG AA ${AA_TEXT}:1`);
+  console.error(`\n${failures} problem(s): pairs below WCAG AA ${AA_TEXT}:1 or unchecked text colours`);
   process.exit(1);
 }
-console.log(`\nAll ${PAIRS.length * 2} pairs meet WCAG AA.`);
+console.log(`\nAll ${PAIRS.length * 2 + OVERLAY_PAIRS.length} pairs meet WCAG AA, and every text colour is covered.`);

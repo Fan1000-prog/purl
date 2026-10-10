@@ -9,9 +9,10 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { getSettings, saveOnboardingComplete, type TranscriptPayload } from "../main";
 import { mountMascot, type Mascot } from "../components/mascot";
 import { mountModelDownload, type ModelDownload } from "../components/model-download";
-import { displayHotkey, platform } from "../platform";
+import { displayHotkey, platform, privacySettingsUrl } from "../platform";
 import type { EngineState, EngineStatusView, Trust } from "../types";
 import { showSmartOffer } from "./smart-offer";
+import { getStatus } from "../status";
 import { FIELD_READING_DISCLOSURE } from "../disclosure";
 
 const STEPS = ["welcome", "permissions", "model", "try"] as const;
@@ -19,17 +20,6 @@ type Step = (typeof STEPS)[number];
 const SPEECH_MODEL = "parakeet-v3";
 const PERMISSION_POLL_MS = 2000;
 
-const SETTINGS_URLS = {
-  macos: {
-    mic: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
-    ax: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
-  },
-  windows: { mic: "ms-settings:privacy-microphone", ax: "" },
-};
-
-interface StatusPayload {
-  paste_trust: Trust;
-}
 
 let root: HTMLElement;
 let step: Step = "welcome";
@@ -160,13 +150,13 @@ async function micTrust(): Promise<Trust | "unknown"> {
 
 function permissions() {
   const os = platform();
-  const mic = permissionRow("Microphone", "So Purl can hear you.", SETTINGS_URLS[os].mic);
+  const mic = permissionRow("Microphone", "So Purl can hear you.", privacySettingsUrl("mic")!);
   const rows = [mic.row];
   const ax = os === "macos"
     ? permissionRow(
         "Accessibility",
         `So Purl can paste at your cursor. Without it, your words go to the clipboard. ${FIELD_READING_DISCLOSURE}`,
-        SETTINGS_URLS.macos.ax,
+        privacySettingsUrl("accessibility")!,
       )
     : null;
   if (ax) {
@@ -190,12 +180,7 @@ function permissions() {
   const update = async () => {
     const m = await micTrust();
     mic.set(m);
-    let axTrust: Trust = "not_required";
-    if (ax) {
-      const s = await invoke<StatusPayload>("get_status").catch(() => null);
-      axTrust = s ? s.paste_trust : "denied";
-      ax.set(axTrust);
-    }
+    if (ax) ax.set((await getStatus().catch(() => null))?.pasteTrust ?? "denied");
     note.hidden = m !== "denied";
     note.textContent = "Purl can't hear you without the microphone. You can still continue and turn it on later.";
   };
