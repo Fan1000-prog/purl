@@ -1,5 +1,5 @@
-// Home: a title and state dot showing what's happening, the hotkey, the last
-// dictation (cleaned or raw), today's stats and recent history. A banner
+// Home: the voice orb and a title showing what's happening, the hotkey, the
+// last dictation (cleaned or raw), today's stats and recent history. A banner
 // takes the top when something blocks dictation or paste.
 
 import { invoke } from "@tauri-apps/api/core";
@@ -15,6 +15,8 @@ import { getStatus } from "../status";
 import { privacySettingsUrl } from "../platform";
 import { renderStats } from "./insights";
 import type { Trust } from "../types";
+import { mountOrb, type OrbHandle, type OrbState } from "../brand/components";
+import { micLevel } from "../level";
 
 const STATUS_POLL_MS = 5000;
 const DONE_MS = 2400;
@@ -30,10 +32,20 @@ let last: TranscriptPayload | null = null;
 let showRaw = false;
 let bannerDownload: ModelDownload | null = null;
 let bannerKey = "";
+let orb: OrbHandle | null = null;
 
-// ---------- hero: state, title, button ----------
+// ---------- hero: orb, title, button ----------
 
 type HeroState = "idle" | "listening" | "thinking" | "done" | "blocked";
+
+// Blocked has no orb state of its own: the orb rests idle and the box dims.
+const ORB: Record<HeroState, OrbState> = {
+  idle: "idle",
+  listening: "listening",
+  thinking: "polishing",
+  done: "done",
+  blocked: "idle",
+};
 
 function renderHero() {
   const ready = stt.state === "ready" || stt.state === "idle";
@@ -47,6 +59,7 @@ function renderHero() {
     : ["Ready when you are.", "idle"];
   $("home-title").textContent = title;
   $("home-state").dataset.state = state;
+  if (orb && orb.state !== ORB[state]) orb.set(ORB[state]);
 
   const btn = $<HTMLButtonElement>("toggle-btn");
   btn.textContent = dictation === "recording" ? "Stop and send" : "Start dictation";
@@ -203,6 +216,8 @@ function refreshAll() {
 }
 
 export function initHome() {
+  orb = mountOrb($("home-orb"), { size: 184 });
+  void listen<number>("audio-level", (e) => orb?.level(micLevel(e.payload)));
   $("toggle-btn").addEventListener("click", () => void invoke("toggle_recording"));
 
   onRadio($("view-home").querySelector<HTMLElement>(".segmented")!, (b) => {
