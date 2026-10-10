@@ -1,0 +1,1280 @@
+/* Retro-desktop utility skin: warm parchment surface, thick ink outlines,
+   flat offset "sticker" shadows instead of blur, mono type for structure
+   (headings/labels/chrome), system sans for reading copy. Color is a signal
+   (green = ready/go, rust = recording, mustard = a label), never decoration —
+   one accent per surface, not a rainbow of pastel fills.
+
+   Type roles: Fraunces for titles (Gaudi Catalog is a commercial font we
+   don't have a license for; this is the closest open-license substitute —
+   a characterful display serif), Plus Jakarta Sans for body copy and
+   inputs (substitute for Atyp Text Medium, same reasoning), EB Garamond
+   Italic for the "Home" nav item only (as specified), Menlo for chrome
+   (buttons, tags, kbd chips, nav — unchanged). Only the weights actually
+   bundled below are ever requested, so nothing gets synthetic bold/italic. */
+
+@font-face {
+  font-family: "Fraunces";
+  src: url("./assets/fonts/Fraunces-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Plus Jakarta Sans";
+  src: url("./assets/fonts/PlusJakartaSans-Medium.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Plus Jakarta Sans";
+  src: url("./assets/fonts/PlusJakartaSans-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "EB Garamond";
+  src: url("./assets/fonts/EBGaramond-Italic.woff2") format("woff2");
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
+:root {
+  --ink: #201b14;
+  --ink-2: #6b6255;
+  --ink-3: #9a9080;
+  --paper: #ffffff;
+  --paper-raised: #ffffff;
+  --line: rgba(32, 27, 20, 0.18);
+  --chip: #f2f2ee;
+  --shadow-c: #201b14;
+
+  --green: #2e9a63;
+  --green-tint: #dceee1;
+  --rust: #c6553b;
+  --rust-tint: #f5ded7;
+  --mustard: #b9852a;
+  --mustard-tint: #f6e7c9;
+
+  --ok: var(--green);
+  --rec: var(--rust);
+  --busy: var(--mustard);
+
+  --radius: 14px;
+  --radius-sm: 9px;
+  --shadow-1: 3px 3px 0 var(--shadow-c);
+  --shadow-2: 5px 5px 0 var(--shadow-c);
+  /* Menlo (not the "SF Mono"/ui-monospace pair) — matches reliably by name
+     in every engine instead of silently falling through per element. */
+  --font-mono: Menlo, Consolas, "Liberation Mono", monospace;
+  --font-title: "Fraunces", Georgia, serif;
+  --font-body: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-home: "EB Garamond", Georgia, serif;
+
+  font-family: var(--font-body);
+  font-size: clamp(14px, 0.35vw + 13px, 16px);
+  color: var(--ink);
+  background: var(--paper);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+:focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: 2px;
+}
+
+/* ---------- header ---------- */
+
+.titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 4px 14px;
+}
+
+h1 {
+  font-family: var(--font-mono);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+
+/* ---------- dictate hero row ---------- */
+
+.dictate-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 16px;
+  border: 2px solid var(--ink);
+  border-radius: var(--radius);
+  background: var(--paper-raised);
+  box-shadow: var(--shadow-2);
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: transform 0.08s ease, box-shadow 0.08s ease;
+}
+
+.dictate-row:hover:not(:disabled) {
+  transform: translate(-1px, -1px);
+  box-shadow: 6px 6px 0 var(--shadow-c);
+}
+
+.dictate-row:active:not(:disabled) {
+  transform: translate(2px, 2px);
+  box-shadow: 1px 1px 0 var(--shadow-c);
+}
+
+.dictate-row:disabled {
+  cursor: default;
+  color: var(--ink-3);
+}
+
+.row-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: 2px solid var(--ink);
+  background: var(--paper);
+  color: var(--ink);
+  flex: none;
+  transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
+}
+
+.dictate-row.is-recording .row-icon {
+  background: var(--rust-tint);
+  border-color: var(--rust);
+  color: var(--rust);
+}
+
+.dictate-row.is-processing .row-icon {
+  background: var(--mustard-tint);
+  border-color: var(--mustard);
+  color: var(--mustard);
+}
+
+.row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.row-title {
+  font-family: var(--font-title);
+  font-size: 17px;
+  font-weight: 400;
+}
+
+.row-sub {
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+kbd {
+  display: inline-block;
+  padding: 1px 7px;
+  border: 1.5px solid var(--ink);
+  border-radius: 6px;
+  background: var(--paper);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* ---------- groups ---------- */
+
+.group {
+  border-top: 1.5px solid var(--line);
+  margin-top: 20px;
+  padding-top: 16px;
+}
+
+.eyebrow {
+  font-family: var(--font-title);
+  font-size: 15px;
+  font-weight: 400;
+  letter-spacing: 0.01em;
+  color: var(--ink);
+  margin: 0 0 12px;
+}
+
+/* ---------- setup checklist ---------- */
+
+#check-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+#check-items li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 9px;
+  padding: 7px 4px;
+  font-size: 13px;
+}
+
+#check-items .mark {
+  position: relative;
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  font-size: 0;
+  align-self: center;
+}
+
+#check-items .mark::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1.5px solid var(--ink-3);
+  background: transparent;
+}
+
+#check-items li.ok .mark::before {
+  background: var(--ok);
+  border-color: var(--ok);
+}
+
+#check-items li.bad .mark::before {
+  background: var(--rec);
+  border-color: var(--rec);
+}
+
+/* The onboarding wizard's own checklist (step 3) drops the status dot
+   entirely — the fix hint below a bad item already carries that signal,
+   and the plain list read cleaner without it. */
+#wiz-body ul.wiz-checks {
+  list-style: none;
+  margin: 0 0 10px;
+  padding: 0;
+}
+
+#wiz-body ul.wiz-checks .mark {
+  display: none;
+}
+
+#check-items .fix,
+#wiz-body ul.wiz-checks .fix {
+  flex-basis: 100%;
+  margin-left: 19px;
+  font-size: 12px;
+  color: var(--ink-2);
+}
+
+/* ---------- transcript ---------- */
+
+.transcript-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+#heatmap-range {
+  width: auto;
+  flex: none;
+  padding: 5px 8px;
+  font-size: 12px;
+}
+
+.transcript-label {
+  font-family: var(--font-title);
+  font-size: 14px;
+  font-weight: 400;
+}
+
+.transcript {
+  white-space: pre-wrap;
+  background: var(--chip);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  min-height: 2.4rem;
+  margin: 0 0 8px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.badge {
+  background: var(--green-tint);
+  border: 1px solid var(--green);
+  color: var(--green);
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 1px 5px;
+  border-radius: 4px;
+  vertical-align: 1px;
+}
+
+.muted {
+  color: var(--ink-2);
+}
+
+/* Snippets' intro paragraph sits directly above the form with no divider
+   in between (unlike Transforms, whose next section has its own top
+   border) — a bit of extra bottom margin keeps the spacing consistent. */
+#view-snippets > p.meta {
+  margin-bottom: 8px;
+}
+
+.meta {
+  font-size: 12px;
+  color: var(--ink-3);
+  margin: 4px 0 0;
+}
+
+.hidden {
+  display: none;
+}
+
+details summary {
+  cursor: pointer;
+  font-size: 12px;
+  color: var(--ink-2);
+  margin-bottom: 6px;
+}
+
+details summary:hover {
+  color: var(--ink);
+}
+
+/* ---------- settings form ---------- */
+
+form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.field {
+  display: grid;
+  grid-template-columns: 130px 1fr;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.field > span:first-child {
+  color: var(--ink-2);
+}
+
+.check-control {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.field-check {
+  align-items: start;
+}
+
+.check-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.check-row input[type="checkbox"] {
+  margin-top: 2px;
+  flex-shrink: 0;
+}
+
+.check-hint {
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+input,
+select,
+textarea {
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  padding: 7px 9px;
+  border: 1.5px solid var(--ink);
+  border-radius: var(--radius-sm);
+  background: var(--paper-raised);
+  width: 100%;
+}
+
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: 1px;
+  border-color: var(--ink);
+}
+
+input[type="checkbox"] {
+  width: auto;
+  accent-color: var(--green);
+}
+
+textarea {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+code {
+  background: var(--chip);
+  border-radius: 4px;
+  padding: 0 4px;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 2px;
+}
+
+/* Updates / Welcome tour: consistent breathing room after the intro line
+   and after the action button, instead of the two sitting flush. */
+#settings-section-updates p.meta,
+#settings-section-tour p.meta {
+  margin-bottom: 5px;
+}
+
+#settings-section-updates .actions,
+#settings-section-tour .actions {
+  margin-bottom: 5px;
+}
+
+/* Glossary: even title → paragraph → textarea → button rhythm. */
+#settings-section-glossary p.meta {
+  margin-bottom: 2px;
+}
+
+#settings-section-glossary textarea {
+  margin-bottom: 12px;
+}
+
+/* ---------- buttons ---------- */
+
+button.ghost {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ink);
+  padding: 6px 13px;
+  border: 1.5px solid var(--ink);
+  border-radius: var(--radius-sm);
+  background: var(--paper-raised);
+  box-shadow: var(--shadow-1);
+  cursor: pointer;
+  transition: transform 0.08s ease, box-shadow 0.08s ease;
+}
+
+button.ghost:hover:not(:disabled) {
+  transform: translate(-1px, -1px);
+  box-shadow: 4px 4px 0 var(--shadow-c);
+}
+
+button.ghost:active:not(:disabled) {
+  transform: translate(1px, 1px);
+  box-shadow: 1px 1px 0 var(--shadow-c);
+}
+
+button.ghost:disabled {
+  color: var(--ink-3);
+  box-shadow: none;
+  cursor: default;
+}
+
+/* ---------- footer ---------- */
+
+footer {
+  border-top: 1.5px solid var(--line);
+  margin-top: 18px;
+  padding: 14px 4px 0;
+  text-align: center;
+}
+
+/* ---------- feature cards ---------- */
+
+.feature-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+}
+
+.feature-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  min-height: 132px;
+  padding: 16px 14px 14px;
+  border: 2px solid var(--ink);
+  border-radius: var(--radius);
+  background: var(--paper-raised);
+  box-shadow: var(--shadow-1);
+  font: inherit;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  transition: transform 0.08s ease, box-shadow 0.08s ease;
+}
+
+.feature-card::before {
+  content: attr(data-tag);
+  align-self: flex-start;
+  font-family: var(--font-mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--accent, var(--ink-2));
+  border: 1px solid var(--accent, var(--line));
+  border-radius: 5px;
+  padding: 2px 6px;
+  margin-bottom: 2px;
+}
+
+.feature-card:hover {
+  transform: translate(-1px, -1px);
+  box-shadow: 5px 5px 0 var(--shadow-c);
+}
+.feature-card:active {
+  transform: translate(1px, 1px);
+  box-shadow: 1px 1px 0 var(--shadow-c);
+}
+
+.card-title { font-family: var(--font-title); font-size: 15px; font-weight: 400; }
+.card-sub { font-size: 12px; color: var(--ink-2); line-height: 1.45; }
+
+.card-snippets { --accent: var(--green); }
+.card-glossary { --accent: var(--mustard); }
+.card-cleanup  { --accent: var(--rust); }
+.card-insights { --accent: var(--green); }
+
+/* ---------- dark ---------- */
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink: #ede6d6;
+    --ink-2: #b8ac96;
+    --ink-3: #7c725f;
+    --paper: #1c1812;
+    --paper-raised: #242017;
+    --line: rgba(237, 230, 214, 0.16);
+    --chip: #2c2519;
+    --shadow-c: #000000;
+
+    --green: #4cb37e;
+    --green-tint: #1f3126;
+    --rust: #e07056;
+    --rust-tint: #3a231c;
+    --mustard: #e0a83f;
+    --mustard-tint: #3a2e17;
+  }
+}
+
+/* ---------- sidebar shell ---------- */
+
+.shell {
+  display: flex;
+  height: 100vh;
+}
+
+.sidebar {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 196px;
+  flex: none;
+  padding: 16px 10px;
+  background: var(--chip);
+  border-right: 2px solid var(--ink);
+}
+
+.brand {
+  padding: 2px 8px 14px;
+}
+
+.brand-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.brand-logo {
+  flex: none;
+  display: block;
+}
+
+.nav-btn {
+  font-family: var(--font-title);
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--ink-2);
+  text-align: left;
+  padding: 8px 10px;
+  border: 1.5px solid transparent;
+  border-radius: var(--radius-sm);
+  background: none;
+  cursor: pointer;
+}
+
+/* Home stands out in Garamond italic, as specifically requested — every
+   other nav item uses the title face above (same as "Start dictation" /
+   "What it can do"), not the mono chrome face. */
+.nav-btn[data-view="home"] {
+  font-family: var(--font-home);
+  font-style: italic;
+  font-weight: 400;
+  font-size: 15px;
+}
+
+.nav-btn:hover {
+  background: var(--paper-raised);
+  border-color: var(--line);
+}
+
+.nav-btn.active {
+  background: var(--paper-raised);
+  border-color: var(--ink);
+  color: var(--ink);
+  box-shadow: 2px 2px 0 var(--shadow-c);
+}
+
+.update-badge {
+  color: var(--green);
+  font-size: 9px;
+  margin-left: 6px;
+  vertical-align: 2px;
+}
+
+.update-badge.hidden {
+  display: none;
+}
+
+
+/* ---------- settings: bottom-anchored gear + animated flyout ---------- */
+
+.sidebar-settings {
+  position: relative;
+  margin-top: auto;
+  padding-top: 10px;
+  /* Bridges the visual gap to the flyout with real (invisible) hoverable
+     area, so moving the mouse from the gear button toward a menu item
+     doesn't cross a dead zone and prematurely end :hover. */
+  padding-right: 8px;
+}
+
+.nav-settings {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+}
+
+.gear-icon {
+  flex: none;
+  color: inherit;
+  transition: transform 0.4s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.sidebar-settings:hover .gear-icon,
+.sidebar-settings:focus-within .gear-icon {
+  transform: rotate(50deg);
+}
+
+.settings-flyout {
+  position: absolute;
+  left: 100%;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 160px;
+  padding: 7px;
+  border: 2px solid var(--ink);
+  border-radius: var(--radius);
+  background: var(--paper-raised);
+  box-shadow: var(--shadow-2);
+  opacity: 0;
+  transform: translate(-6px, 4px) scale(0.96);
+  transform-origin: bottom left;
+  pointer-events: none;
+  transition: opacity 0.16s ease, transform 0.18s cubic-bezier(0.2, 0.9, 0.25, 1.2);
+  z-index: 50;
+}
+
+.sidebar-settings:hover .settings-flyout,
+.sidebar-settings:focus-within .settings-flyout {
+  opacity: 1;
+  transform: translate(0, 0) scale(1);
+  pointer-events: auto;
+}
+
+.flyout-item {
+  font-family: var(--font-title);
+  font-size: 13px;
+  font-weight: 400;
+  text-align: left;
+  color: var(--ink-2);
+  padding: 7px 10px;
+  border: 1.5px solid transparent;
+  border-radius: var(--radius-sm);
+  background: none;
+  cursor: pointer;
+  opacity: 0;
+  transform: translateX(-5px);
+  transition: opacity 0.14s ease, transform 0.14s ease, background 0.1s ease, color 0.1s ease;
+}
+
+.sidebar-settings:hover .flyout-item,
+.sidebar-settings:focus-within .flyout-item {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.flyout-item:nth-child(1) { transition-delay: 0.02s; }
+.flyout-item:nth-child(2) { transition-delay: 0.06s; }
+.flyout-item:nth-child(3) { transition-delay: 0.1s; }
+.flyout-item:nth-child(4) { transition-delay: 0.14s; }
+
+.flyout-item:hover,
+.flyout-item:focus-visible {
+  background: var(--chip);
+  color: var(--ink);
+}
+
+.flyout-item.active {
+  background: var(--paper);
+  border-color: var(--ink);
+  color: var(--ink);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .gear-icon,
+  .settings-flyout,
+  .flyout-item {
+    transition: none;
+  }
+}
+
+#content {
+  flex: 1;
+  overflow-y: auto;
+  padding: clamp(20px, 2.2vw, 40px) clamp(24px, 3.4vw, 60px) clamp(28px, 3vw, 48px);
+}
+
+.view {
+  display: none;
+  width: 100%;
+  max-width: 1400px;
+}
+
+#content[data-view="home"] #view-home,
+#content[data-view="insights"] #view-insights,
+#content[data-view="snippets"] #view-snippets,
+#content[data-view="transforms"] #view-transforms,
+#content[data-view="settings"] #view-settings {
+  display: block;
+}
+
+/* first group in a view (or in the active settings sub-section) doesn't
+   need the divider */
+.view > .group:first-child,
+.view > h2.eyebrow:first-child + *,
+.settings-section > .group:first-child {
+  border-top: none;
+}
+
+/* ---------- settings sub-sections (gear flyout routes here) ---------- */
+
+.settings-section {
+  display: none;
+}
+
+#view-settings[data-section="setup"] #settings-section-setup,
+#view-settings[data-section="updates"] #settings-section-updates,
+#view-settings[data-section="tour"] #settings-section-tour,
+#view-settings[data-section="glossary"] #settings-section-glossary,
+#view-settings[data-section="learning"] #settings-section-learning {
+  display: block;
+}
+
+/* ---------- home: history + tips ---------- */
+
+.history-list,
+.snippet-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.history-item {
+  border-bottom: 1.5px solid var(--line);
+  padding: 11px 0;
+}
+
+.history-item:last-child {
+  border-bottom: none;
+}
+
+.history-text {
+  white-space: pre-wrap;
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 0 0 4px;
+}
+
+.history-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--ink-3);
+}
+
+.history-meta .ghost {
+  margin-left: auto;
+}
+
+.tips {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+
+.tips strong {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+/* ---------- insights ---------- */
+
+.stat-hero {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border: 2px solid var(--ink);
+  border-radius: var(--radius);
+  background: var(--paper-raised);
+  box-shadow: var(--shadow-2);
+  padding: 16px 18px;
+  margin-bottom: 10px;
+}
+
+.stat-hero .stat-num {
+  font-size: 34px;
+  color: var(--green);
+}
+
+.stat-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+
+.stat-card {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  border: 1.5px solid var(--ink);
+  border-radius: var(--radius-sm);
+  background: var(--paper-raised);
+  box-shadow: 2px 2px 0 var(--shadow-c);
+  padding: 12px;
+}
+
+.stat-num {
+  font-family: var(--font-mono);
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.stat-label {
+  font-size: 11px;
+  color: var(--ink-2);
+}
+
+.heatmap {
+  display: grid;
+  grid-auto-flow: column;
+  grid-template-rows: repeat(7, 10px);
+  gap: 2px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.heat {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  border: 1px solid var(--line);
+  background: var(--chip);
+}
+
+.heat.h1 { background: color-mix(in srgb, var(--green) 35%, var(--chip)); border-color: color-mix(in srgb, var(--green) 55%, var(--line)); }
+.heat.h2 { background: color-mix(in srgb, var(--green) 65%, var(--chip)); border-color: var(--green); }
+.heat.h3 { background: var(--green); border-color: var(--green); }
+
+.heatmap-legend {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 8px;
+}
+
+/* ---------- snippets ---------- */
+
+.snippet-list {
+  margin-top: 14px;
+}
+
+.snippet-item {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  border-bottom: 1.5px solid var(--line);
+  padding: 10px 0;
+  font-size: 13px;
+}
+
+.snippet-item:last-child {
+  border-bottom: none;
+}
+
+.snippet-trigger {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  flex: none;
+}
+
+.snippet-expansion {
+  color: var(--ink-2);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  flex: 1;
+}
+
+/* ---------- onboarding wizard ---------- */
+
+.wizard-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(32, 27, 20, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+/* .hidden and .wizard-backdrop tie on specificity; without this, source
+   order lets .wizard-backdrop's display:flex win and the closed wizard
+   still renders (and blocks clicks) even though .hidden is applied. */
+.wizard-backdrop.hidden {
+  display: none;
+}
+
+.wizard-card {
+  width: min(440px, calc(100vw - 48px));
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  background: var(--paper-raised);
+  border: 2px solid var(--ink);
+  border-radius: 18px;
+  padding: 24px;
+  box-shadow: 7px 7px 0 var(--shadow-c);
+}
+
+.wizard-card h2 { font-family: var(--font-title); font-size: 20px; font-weight: 400; margin: 0 0 10px; }
+#wiz-body p { font-size: 13px; line-height: 1.55; color: var(--ink-2); margin: 0 0 10px; }
+
+/* The notice cards reuse .meta for body copy, but .meta is sized for a
+   one-line caption under a form field — 12px, 4px of top margin, no
+   line-height. Stacked into paragraphs that reads as one solid block, so
+   give them the wizard's own body treatment instead. */
+#field-notice p.meta,
+#update-notice p.meta {
+  font-size: 13px;
+  line-height: 1.65;
+  color: var(--ink-2);
+  margin: 0 0 14px;
+}
+#field-notice p.meta:last-of-type,
+#update-notice p.meta:last-of-type { margin-bottom: 0; }
+/* The lead-in of each paragraph carries the point; let it sit forward of
+   the explanation rather than blending into it. */
+#field-notice p.meta strong,
+#update-notice p.meta strong { color: var(--ink); font-weight: 600; }
+#wiz-body .transcript { color: var(--ink); }
+#wiz-body .feature-grid { margin-top: 4px; }
+
+.wizard-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 16px;
+}
+
+button.wiz-primary { background: var(--ink); color: var(--paper); border-color: var(--ink); box-shadow: 3px 3px 0 var(--shadow-c); }
+button.wiz-primary:hover:not(:disabled) { background: var(--ink); opacity: 0.88; }
+button.wiz-primary:disabled { background: var(--ink-3); border-color: var(--ink-3); box-shadow: none; }
+
+/* ---------- transforms ---------- */
+
+.transforms-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-top: 1.5px solid var(--line);
+  margin-top: 20px;
+  padding-top: 16px;
+}
+.transforms-head .eyebrow { margin: 0; }
+
+.transform-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.transform-card {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 14px;
+  border: 2px solid var(--ink);
+  border-radius: var(--radius);
+  background: var(--paper-raised);
+  box-shadow: var(--shadow-1);
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+  transition: transform 0.08s ease, box-shadow 0.08s ease;
+}
+.transform-card:hover:not(.editing) {
+  transform: translate(-1px, -1px);
+  box-shadow: 5px 5px 0 var(--shadow-c);
+}
+.transform-card:active:not(.editing) {
+  transform: translate(1px, 1px);
+  box-shadow: 1px 1px 0 var(--shadow-c);
+}
+.transform-card.editing { cursor: default; grid-column: 1 / -1; }
+
+.transform-chip {
+  align-self: flex-start;
+  font-size: 11px;
+  padding: 2px 8px;
+  border: 1.5px solid var(--ink);
+  border-radius: 6px;
+  background: var(--chip);
+  color: var(--ink-2);
+}
+
+.transform-create {
+  background: transparent;
+  border-style: dashed;
+  box-shadow: none;
+}
+.transform-create:hover:not(.editing) {
+  transform: none;
+  box-shadow: none;
+  background: var(--chip);
+}
+.transform-plus {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  border: 1.5px solid var(--ink);
+  background: var(--paper-raised);
+  color: var(--ink-2);
+  font-size: 15px;
+}
+
+.transform-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 10px;
+  border-top: 1.5px solid var(--line);
+}
+.transform-editor textarea { resize: vertical; }
+
+.linklike {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--ink-2);
+  text-decoration: underline;
+  cursor: pointer;
+  font-size: 0.85em;
+}
+.linklike:hover {
+  color: var(--ink);
+}
+
+/* Hotkey recorder (Settings + onboarding) */
+.hotkey-recorder {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+.hotkey-recorder.recording kbd {
+  opacity: 0.4;
+}
+.hotkey-recorder .linklike {
+  opacity: 0.75;
+}
+.hotkey-recorder .linklike:hover {
+  opacity: 1;
+}
+
+/* Cleanup-model install status + download progress */
+.model-status {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--muted, #666);
+  min-height: 24px;
+}
+.model-status .ok {
+  color: #1a7f37;
+}
+.model-status button {
+  cursor: pointer;
+}
+.model-status .bar {
+  flex: 1;
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.1);
+  overflow: hidden;
+  max-width: 220px;
+}
+.model-status .bar > span {
+  display: block;
+  height: 100%;
+  width: 0%;
+  background: #1a7f37;
+  transition: width 0.2s ease;
+}
+.model-status .err {
+  color: #b42318;
+}
+@media (prefers-color-scheme: dark) {
+  .model-status .bar {
+    background: rgba(255, 255, 255, 0.15);
+  }
+}
+
+/* ---------- celebrate: confetti + toast for meaningful moments ---------- */
+
+#celebrate-root {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 999;
+  overflow: hidden;
+}
+
+.confetti-burst {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 0;
+  height: 0;
+}
+
+.confetti-piece {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 7px;
+  height: 11px;
+  border-radius: 2px;
+  opacity: 0;
+  animation: confetti-fall var(--duration) var(--delay) cubic-bezier(0.15, 0.6, 0.4, 1) forwards;
+}
+
+@keyframes confetti-fall {
+  0% {
+    opacity: 1;
+    transform: translate(0, -10px) rotate(0deg);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(var(--x), var(--fall, 160px)) rotate(var(--rot));
+  }
+}
+
+.celebrate-toast {
+  position: absolute;
+  top: 18px;
+  left: 50%;
+  transform: translate(-50%, -12px);
+  opacity: 0;
+  font-family: var(--font-title);
+  font-size: 14px;
+  color: var(--ink);
+  background: var(--paper-raised);
+  border: 2px solid var(--ink);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-2);
+  padding: 10px 16px;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  white-space: nowrap;
+}
+
+.celebrate-toast.in {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .confetti-piece {
+    animation: none;
+    display: none;
+  }
+  .celebrate-toast {
+    transition: none;
+  }
+}
