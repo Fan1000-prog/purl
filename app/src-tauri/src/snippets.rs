@@ -29,7 +29,10 @@ pub fn save(path: &Path, list: &[Snippet]) -> std::io::Result<()> {
         std::fs::create_dir_all(dir)?;
     }
     let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_string_pretty(list).map_err(std::io::Error::other)?)?;
+    std::fs::write(
+        &tmp,
+        serde_json::to_string_pretty(list).map_err(std::io::Error::other)?,
+    )?;
     std::fs::rename(&tmp, path)
 }
 
@@ -60,9 +63,15 @@ pub fn expand(text: &str, snippets: &[Snippet]) -> String {
             let start = from + pos;
             let end = start + trig.len();
             let before_ok = start == 0
-                || !lower[..start].chars().next_back().is_some_and(char::is_alphanumeric);
+                || !lower[..start]
+                    .chars()
+                    .next_back()
+                    .is_some_and(char::is_alphanumeric);
             let after_ok = end == lower.len()
-                || !lower[end..].chars().next().is_some_and(char::is_alphanumeric);
+                || !lower[end..]
+                    .chars()
+                    .next()
+                    .is_some_and(char::is_alphanumeric);
             let overlaps = spans.iter().any(|(a, b, _)| start < *b && end > *a);
             if before_ok && after_ok && !overlaps {
                 spans.push((start, end, s.expansion.clone()));
@@ -131,7 +140,10 @@ mod tests {
     #[test]
     fn expansion_is_not_rescanned() {
         // "email" appears inside the first expansion; it must not re-trigger.
-        let s = [snip("contact line", "email: you@example.com"), snip("email", "BOOM")];
+        let s = [
+            snip("contact line", "email: you@example.com"),
+            snip("email", "BOOM"),
+        ];
         assert_eq!(
             expand("Add contact line here", &s),
             "Add email: you@example.com here"

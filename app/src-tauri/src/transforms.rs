@@ -91,7 +91,10 @@ pub fn save(path: &Path, list: &[Transform]) -> std::io::Result<()> {
         std::fs::create_dir_all(dir)?;
     }
     let tmp = path.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_string_pretty(list).map_err(std::io::Error::other)?)?;
+    std::fs::write(
+        &tmp,
+        serde_json::to_string_pretty(list).map_err(std::io::Error::other)?,
+    )?;
     std::fs::rename(&tmp, path)
 }
 
@@ -101,7 +104,10 @@ pub fn reset_builtins(list: Vec<Transform>) -> Vec<Transform> {
     let mut out = builtins();
     let default_keys: Vec<String> = out.iter().filter_map(|t| t.hotkey.clone()).collect();
     for mut t in list.into_iter().filter(|t| !t.builtin) {
-        if t.hotkey.as_deref().is_some_and(|h| default_keys.iter().any(|k| k == h)) {
+        if t.hotkey
+            .as_deref()
+            .is_some_and(|h| default_keys.iter().any(|k| k == h))
+        {
             t.hotkey = None;
         }
         out.push(t);
@@ -199,8 +205,14 @@ pub fn run(text: &str, transform_prompt: &str, model: &str) -> Result<String, St
         keep_alive: "30m",
         options: serde_json::json!({ "temperature": 0.2 }),
         messages: vec![
-            ChatMessage { role: "system", content: &system },
-            ChatMessage { role: "user", content: &user },
+            ChatMessage {
+                role: "system",
+                content: &system,
+            },
+            ChatMessage {
+                role: "user",
+                content: &user,
+            },
         ],
     };
     let client = reqwest::blocking::Client::builder()
@@ -281,10 +293,14 @@ mod tests {
         assert!(validate(&dup_key, dictation).unwrap_err().contains("Alt+9"));
 
         let clash = vec![custom("a", Some(dictation))];
-        assert!(validate(&clash, dictation).unwrap_err().contains("dictation"));
+        assert!(validate(&clash, dictation)
+            .unwrap_err()
+            .contains("dictation"));
 
         let dup_id = vec![custom("a", None), custom("a", None)];
-        assert!(validate(&dup_id, dictation).unwrap_err().contains("Duplicate"));
+        assert!(validate(&dup_id, dictation)
+            .unwrap_err()
+            .contains("Duplicate"));
 
         let mut unnamed = custom("x", None);
         unnamed.name = "  ".into();

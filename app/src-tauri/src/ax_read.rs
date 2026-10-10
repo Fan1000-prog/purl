@@ -84,10 +84,7 @@ mod mac {
             value: CFTypeRef,
         ) -> AXError;
         fn AXUIElementGetPid(element: CFTypeRef, pid: *mut i32) -> AXError;
-        fn AXUIElementCopyAttributeNames(
-            element: CFTypeRef,
-            names: *mut CFTypeRef,
-        ) -> AXError;
+        fn AXUIElementCopyAttributeNames(element: CFTypeRef, names: *mut CFTypeRef) -> AXError;
     }
 
     #[link(name = "CoreFoundation", kind = "framework")]
@@ -166,7 +163,11 @@ mod mac {
         }
         let mut out: i32 = 0;
         let ok = unsafe {
-            CFNumberGetValue(n, K_CF_NUMBER_SINT32_TYPE, &mut out as *mut i32 as *mut c_void)
+            CFNumberGetValue(
+                n,
+                K_CF_NUMBER_SINT32_TYPE,
+                &mut out as *mut i32 as *mut c_void,
+            )
         };
         ok.then_some(out)
     }
@@ -198,13 +199,16 @@ mod mac {
         // UTF-8 can need 4 bytes per UTF-16 unit, plus the terminator.
         let cap = unsafe { CFStringGetLength(cf) } * 4 + 1;
         let mut buf = vec![0i8; cap as usize];
-        let ok = unsafe {
-            CFStringGetCString(cf, buf.as_mut_ptr(), cap, K_CF_STRING_ENCODING_UTF8)
-        };
+        let ok =
+            unsafe { CFStringGetCString(cf, buf.as_mut_ptr(), cap, K_CF_STRING_ENCODING_UTF8) };
         if !ok {
             return None;
         }
-        let bytes: Vec<u8> = buf.iter().take_while(|&&b| b != 0).map(|&b| b as u8).collect();
+        let bytes: Vec<u8> = buf
+            .iter()
+            .take_while(|&&b| b != 0)
+            .map(|&b| b as u8)
+            .collect();
         String::from_utf8(bytes).ok()
     }
 
@@ -279,7 +283,10 @@ mod mac {
             let Ok(mut guard) = ENHANCE_ATTEMPTS.lock() else {
                 return false;
             };
-            let spent = guard.get_or_insert_with(HashMap::new).entry(pid).or_insert(0);
+            let spent = guard
+                .get_or_insert_with(HashMap::new)
+                .entry(pid)
+                .or_insert(0);
             if *spent >= MAX_ENHANCE_ATTEMPTS {
                 return false;
             }
@@ -322,7 +329,11 @@ mod mac {
     fn snapshot_of(el: CFTypeRef) -> Option<Snapshot> {
         let subrole = attr(el, "AXSubrole").and_then(|o| to_string(o.0));
         if subrole.as_deref() == Some("AXSecureTextField") {
-            return Some(Snapshot { id: String::new(), value: String::new(), secure: true });
+            return Some(Snapshot {
+                id: String::new(),
+                value: String::new(),
+                secure: true,
+            });
         }
         // AXSelectedText as a fallback: some Chromium roles populate it even
         // when AXValue itself stays empty.
@@ -332,9 +343,17 @@ mod mac {
 
         let mut pid: i32 = 0;
         unsafe { AXUIElementGetPid(el, &mut pid) };
-        let role = attr(el, "AXRole").and_then(|o| to_string(o.0)).unwrap_or_default();
-        let title = attr(el, "AXTitle").and_then(|o| to_string(o.0)).unwrap_or_default();
-        Some(Snapshot { id: format!("{pid}:{role}:{title}"), value, secure: false })
+        let role = attr(el, "AXRole")
+            .and_then(|o| to_string(o.0))
+            .unwrap_or_default();
+        let title = attr(el, "AXTitle")
+            .and_then(|o| to_string(o.0))
+            .unwrap_or_default();
+        Some(Snapshot {
+            id: format!("{pid}:{role}:{title}"),
+            value,
+            secure: false,
+        })
     }
 
     /// The focused element, preferring the frontmost application's own element
@@ -396,7 +415,9 @@ mod mac {
             return format!("no frontmost window pid; system_wide_focus_err={sys_err}");
         };
         let app = Owned(unsafe { AXUIElementCreateApplication(pid) });
-        let app_name = attr(app.0, "AXTitle").and_then(|o| to_string(o.0)).unwrap_or_default();
+        let app_name = attr(app.0, "AXTitle")
+            .and_then(|o| to_string(o.0))
+            .unwrap_or_default();
         let (app_focus_err, focused) = attr_checked(app.0, "AXFocusedUIElement");
 
         let Some(focused) = focused else {
@@ -407,8 +428,12 @@ mod mac {
             );
         };
 
-        let role = attr(focused.0, "AXRole").and_then(|o| to_string(o.0)).unwrap_or_default();
-        let subrole = attr(focused.0, "AXSubrole").and_then(|o| to_string(o.0)).unwrap_or_default();
+        let role = attr(focused.0, "AXRole")
+            .and_then(|o| to_string(o.0))
+            .unwrap_or_default();
+        let subrole = attr(focused.0, "AXSubrole")
+            .and_then(|o| to_string(o.0))
+            .unwrap_or_default();
         let (value_err, value) = attr_checked(focused.0, "AXValue");
         let (sel_err, _) = attr_checked(focused.0, "AXSelectedText");
         // Length only, never the text itself.
@@ -479,8 +504,14 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn enhanced_accessibility_request_never_panics_on_bogus_pids() {
-        assert!(!mac::ensure_enhanced_accessibility(0), "pid 0 is not a process");
-        assert!(!mac::ensure_enhanced_accessibility(-1), "negative pids are not processes");
+        assert!(
+            !mac::ensure_enhanced_accessibility(0),
+            "pid 0 is not a process"
+        );
+        assert!(
+            !mac::ensure_enhanced_accessibility(-1),
+            "negative pids are not processes"
+        );
     }
 
     // diagnose() runs against the live system-wide AX element and is called on
@@ -511,7 +542,12 @@ mod tests {
         eprintln!("diagnose(): {}", SystemReader.diagnose());
         match SystemReader.read() {
             // Length, not contents — this prints to a terminal.
-            Some(s) => eprintln!("read(): OK id={:?} len={} secure={}", s.id, s.value.len(), s.secure),
+            Some(s) => eprintln!(
+                "read(): OK id={:?} len={} secure={}",
+                s.id,
+                s.value.len(),
+                s.secure
+            ),
             None => eprintln!("read(): None — the feature would no-op here"),
         }
     }

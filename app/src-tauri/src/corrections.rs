@@ -583,7 +583,10 @@ mod tests {
 
     #[test]
     fn start_finds_a_span_the_app_rewrote_with_smart_quotes() {
-        let w = Watch::start(&snap("she said \u{201C}hi\u{201D} to me"), "she said \"hi\" to me");
+        let w = Watch::start(
+            &snap("she said \u{201C}hi\u{201D} to me"),
+            "she said \"hi\" to me",
+        );
         assert!(w.is_ok());
     }
 

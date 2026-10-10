@@ -76,7 +76,10 @@ fn run(
         ));
     }
     if model.trim().is_empty() {
-        return Err(format!("No {} model configured in Settings.", provider.label()));
+        return Err(format!(
+            "No {} model configured in Settings.",
+            provider.label()
+        ));
     }
     match provider {
         CloudProvider::Claude => run_claude(system, user, model, api_key, timeout),
@@ -123,7 +126,10 @@ fn run_claude(
         max_tokens: MAX_TOKENS,
         system,
         temperature: 0.2,
-        messages: vec![ClaudeMessage { role: "user", content: user }],
+        messages: vec![ClaudeMessage {
+            role: "user",
+            content: user,
+        }],
     };
     let client = reqwest::blocking::Client::builder()
         .timeout(timeout)
@@ -139,7 +145,10 @@ fn run_claude(
     let status = resp.status();
     if !status.is_success() {
         let body = resp.text().unwrap_or_default();
-        return Err(format!("Claude returned {status}: {}", truncate(&body, 200)));
+        return Err(format!(
+            "Claude returned {status}: {}",
+            truncate(&body, 200)
+        ));
     }
     let body: ClaudeResponse = resp.json().map_err(|e| e.to_string())?;
     let text: String = body.content.into_iter().map(|b| b.text).collect();
@@ -201,8 +210,12 @@ fn run_gemini(
     // captured by intermediaries and TLS-terminating proxies that log paths.
     let url = format!("{GEMINI_URL_BASE}/{model}:generateContent");
     let req = GeminiRequest {
-        system_instruction: GeminiContent { parts: vec![GeminiPart { text: system }] },
-        contents: vec![GeminiContent { parts: vec![GeminiPart { text: user }] }],
+        system_instruction: GeminiContent {
+            parts: vec![GeminiPart { text: system }],
+        },
+        contents: vec![GeminiContent {
+            parts: vec![GeminiPart { text: user }],
+        }],
         generation_config: serde_json::json!({ "temperature": 0.2 }),
     };
     let client = reqwest::blocking::Client::builder()
@@ -218,7 +231,10 @@ fn run_gemini(
     let status = resp.status();
     if !status.is_success() {
         let body = resp.text().unwrap_or_default();
-        return Err(format!("Gemini returned {status}: {}", truncate(&body, 200)));
+        return Err(format!(
+            "Gemini returned {status}: {}",
+            truncate(&body, 200)
+        ));
     }
     let body: GeminiResponse = resp.json().map_err(|e| e.to_string())?;
     let text: String = body
@@ -263,7 +279,11 @@ pub fn clean(
 
     let raw = raw.trim();
     if raw.is_empty() {
-        return CleanResult { text: String::new(), used_llm: false, note: Some("empty transcript".into()) };
+        return CleanResult {
+            text: String::new(),
+            used_llm: false,
+            note: Some("empty transcript".into()),
+        };
     }
     let system = crate::cleanup::build_system_prompt(glossary_terms, mode);
     let user = format!("<transcript>\n{raw}\n</transcript>");
@@ -283,7 +303,11 @@ pub fn clean(
                     note: Some("LLM replied instead of cleaning; using raw transcript".into()),
                 }
             } else {
-                CleanResult { text: cleaned, used_llm: true, note: None }
+                CleanResult {
+                    text: cleaned,
+                    used_llm: true,
+                    note: None,
+                }
             }
         }
         Err(e) => CleanResult {
@@ -321,7 +345,14 @@ pub fn run_transform(
 /// does its job and a wrong key reads as "dictation quietly got slower and
 /// no better".
 pub fn test_key(provider: CloudProvider, model: &str, api_key: &str) -> Result<(), String> {
-    match run("Reply with the single word: ok.", "ping", provider, model, api_key, TEST_TIMEOUT) {
+    match run(
+        "Reply with the single word: ok.",
+        "ping",
+        provider,
+        model,
+        api_key,
+        TEST_TIMEOUT,
+    ) {
         Ok(_) => Ok(()),
         Err(e) => {
             let head = error_head(&e);
@@ -361,24 +392,54 @@ mod tests {
 
     #[test]
     fn missing_key_errors_without_network() {
-        let err = run("system", "user", CloudProvider::Claude, "claude-sonnet-5", "", TIMEOUT).unwrap_err();
+        let err = run(
+            "system",
+            "user",
+            CloudProvider::Claude,
+            "claude-sonnet-5",
+            "",
+            TIMEOUT,
+        )
+        .unwrap_err();
         assert!(err.contains("API key"));
     }
 
     #[test]
     fn missing_model_errors_without_network() {
-        let err = run("system", "user", CloudProvider::Gemini, "", "some-key", TIMEOUT).unwrap_err();
+        let err = run(
+            "system",
+            "user",
+            CloudProvider::Gemini,
+            "",
+            "some-key",
+            TIMEOUT,
+        )
+        .unwrap_err();
         assert!(err.contains("model"));
     }
 
     #[test]
     fn empty_selection_errors_without_network() {
-        assert!(run_transform("   ", "do something", CloudProvider::Claude, "claude-sonnet-5", "sk-x").is_err());
+        assert!(run_transform(
+            "   ",
+            "do something",
+            CloudProvider::Claude,
+            "claude-sonnet-5",
+            "sk-x"
+        )
+        .is_err());
     }
 
     #[test]
     fn empty_transcript_short_circuits_without_network() {
-        let r = clean("   ", "- SKU", CloudProvider::Claude, "claude-sonnet-5", "sk-x", StructureMode::None);
+        let r = clean(
+            "   ",
+            "- SKU",
+            CloudProvider::Claude,
+            "claude-sonnet-5",
+            "sk-x",
+            StructureMode::None,
+        );
         assert_eq!(r.text, "");
         assert!(!r.used_llm);
     }
@@ -394,22 +455,28 @@ mod tests {
         // Provider error bodies are arbitrary UTF-8. Cutting mid-character used
         // to panic, which would destroy the in-flight transcript on the cloud
         // failure path.
-        let s = "aaaé";           // 'é' occupies bytes 3..5, so len() == 5
+        let s = "aaaé"; // 'é' occupies bytes 3..5, so len() == 5
         assert_eq!(truncate(s, 4), "aaa…"); // byte 4 is inside 'é' — must back off
-        // A cut exactly on a boundary keeps everything up to it.
+                                            // A cut exactly on a boundary keeps everything up to it.
         assert_eq!(truncate(s, 3), "aaa…");
         // Multi-byte content that fits is returned whole.
         assert_eq!(truncate("héllo", 100), "héllo");
         // Emoji are 4 bytes; cutting inside one must not panic either.
-        let e = "ab🙂";           // len() == 6, emoji at bytes 2..6
+        let e = "ab🙂"; // len() == 6, emoji at bytes 2..6
         assert_eq!(truncate(e, 4), "ab…");
         assert_eq!(truncate(e, 2), "ab…");
     }
 
     #[test]
     fn engine_maps_to_provider() {
-        assert_eq!(CloudProvider::from_engine(AiEngine::Claude), Some(CloudProvider::Claude));
-        assert_eq!(CloudProvider::from_engine(AiEngine::Gemini), Some(CloudProvider::Gemini));
+        assert_eq!(
+            CloudProvider::from_engine(AiEngine::Claude),
+            Some(CloudProvider::Claude)
+        );
+        assert_eq!(
+            CloudProvider::from_engine(AiEngine::Gemini),
+            Some(CloudProvider::Gemini)
+        );
         // Local has no provider — callers must not reach the cloud path.
         assert_eq!(CloudProvider::from_engine(AiEngine::Local), None);
     }
@@ -418,7 +485,10 @@ mod tests {
     fn keychain_accounts_are_distinct_and_stable() {
         // These strings are the Keychain lookup keys. Changing one orphans
         // every already-stored key, so they are pinned by test.
-        assert_eq!(CloudProvider::Claude.keychain_account(), "anthropic_api_key");
+        assert_eq!(
+            CloudProvider::Claude.keychain_account(),
+            "anthropic_api_key"
+        );
         assert_eq!(CloudProvider::Gemini.keychain_account(), "gemini_api_key");
     }
 
@@ -441,7 +511,14 @@ mod tests {
     fn keyless_call_preserves_transcript_and_shared_prompt_has_the_rule() {
         let raw = "we need to merge these two account";
         // An empty key fails before any network call.
-        let r = clean(raw, "- SKU", CloudProvider::Gemini, "gemini-3.5-flash-lite", "", StructureMode::None);
+        let r = clean(
+            raw,
+            "- SKU",
+            CloudProvider::Gemini,
+            "gemini-3.5-flash-lite",
+            "",
+            StructureMode::None,
+        );
         assert_eq!(r.text, raw, "the transcript must survive a keyless call");
         assert!(!r.used_llm);
         assert!(r.note.is_some(), "a failure must explain itself");

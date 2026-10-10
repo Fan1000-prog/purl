@@ -77,7 +77,10 @@ fn replace_word_ci(text: &str, term: &str) -> String {
                 .next_back()
                 .is_some_and(char::is_alphanumeric);
         let boundary_after = end >= text.len()
-            || !text[end..].chars().next().is_some_and(char::is_alphanumeric);
+            || !text[end..]
+                .chars()
+                .next()
+                .is_some_and(char::is_alphanumeric);
         out.push_str(&text[cursor..start]);
         if boundary_before && boundary_after {
             out.push_str(term);
@@ -94,7 +97,13 @@ fn replace_word_ci(text: &str, term: &str) -> String {
 /// stray commas, missing capital at a sentence start.
 fn tidy(text: &str) -> String {
     let mut s = text.trim().to_string();
-    for (from, to) in [(",,", ","), (", .", "."), (",.", "."), (" ,", ","), (" .", ".")] {
+    for (from, to) in [
+        (",,", ","),
+        (", .", "."),
+        (",.", "."),
+        (" ,", ","),
+        (" .", "."),
+    ] {
         while s.contains(from) {
             s = s.replace(from, to);
         }
@@ -121,7 +130,9 @@ mod tests {
     use super::*;
 
     fn dictionary() -> Dictionary {
-        Dictionary::parse("API = application programming interface\nQBR = quarterly business review\nAcme Studio")
+        Dictionary::parse(
+            "API = application programming interface\nQBR = quarterly business review\nAcme Studio",
+        )
     }
 
     #[test]

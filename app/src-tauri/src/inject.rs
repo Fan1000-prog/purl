@@ -144,10 +144,12 @@ pub fn capture_selection() -> Result<(Option<String>, Option<String>), InjectErr
         .map_err(|e| InjectError::Clipboard(e.to_string()))?;
     sleep(Duration::from_millis(80));
 
-    let restore = |cb: &mut arboard::Clipboard, prev: &Option<String>| {
-        match prev {
-            Some(p) => { let _ = cb.set_text(p.clone()); }
-            None => { let _ = cb.clear(); }
+    let restore = |cb: &mut arboard::Clipboard, prev: &Option<String>| match prev {
+        Some(p) => {
+            let _ = cb.set_text(p.clone());
+        }
+        None => {
+            let _ = cb.clear();
         }
     };
 
@@ -174,8 +176,12 @@ pub fn capture_selection() -> Result<(Option<String>, Option<String>), InjectErr
 pub fn restore_clipboard(previous: &Option<String>) {
     if let Ok(mut cb) = arboard::Clipboard::new() {
         match previous {
-            Some(p) => { let _ = cb.set_text(p.clone()); }
-            None => { let _ = cb.clear(); }
+            Some(p) => {
+                let _ = cb.set_text(p.clone());
+            }
+            None => {
+                let _ = cb.clear();
+            }
         }
     }
 }
@@ -196,8 +202,8 @@ fn send_keystroke(keycode: u16, with_command: bool) -> Result<(), InjectError> {
         .map_err(|_| InjectError::KeyEvent)?;
     let down = CGEvent::new_keyboard_event(source.clone(), keycode, true)
         .map_err(|_| InjectError::KeyEvent)?;
-    let up = CGEvent::new_keyboard_event(source, keycode, false)
-        .map_err(|_| InjectError::KeyEvent)?;
+    let up =
+        CGEvent::new_keyboard_event(source, keycode, false).map_err(|_| InjectError::KeyEvent)?;
     if with_command {
         down.set_flags(CGEventFlags::CGEventFlagCommand);
         up.set_flags(CGEventFlags::CGEventFlagCommand);

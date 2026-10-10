@@ -115,7 +115,10 @@ mod tests {
         append(&path, &entry(1)).unwrap();
         {
             use std::io::Write;
-            let mut f = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+            let mut f = std::fs::OpenOptions::new()
+                .append(true)
+                .open(&path)
+                .unwrap();
             writeln!(f, "{{not json").unwrap();
         }
         // Verify that load skips the corrupt line before append rewrites

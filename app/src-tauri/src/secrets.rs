@@ -15,7 +15,15 @@ const SECURITY_BIN: &str = "/usr/bin/security";
 pub fn set(account: &str, secret: &str) -> Result<(), String> {
     let _ = delete(account); // clears any stale entry; a missing one is fine
     let status = Command::new(SECURITY_BIN)
-        .args(["add-generic-password", "-a", account, "-s", SERVICE, "-w", secret])
+        .args([
+            "add-generic-password",
+            "-a",
+            account,
+            "-s",
+            SERVICE,
+            "-w",
+            secret,
+        ])
         .status()
         .map_err(|e| format!("keychain write failed: {e}"))?;
     if status.success() {

@@ -10,12 +10,26 @@ use crate::settings::StructureMode;
 const SENTENCES_PER_PARAGRAPH: usize = 3;
 
 const GREETINGS: &[&str] = &[
-    "hi", "hey", "hello", "dear", "good morning", "good afternoon", "good evening",
+    "hi",
+    "hey",
+    "hello",
+    "dear",
+    "good morning",
+    "good afternoon",
+    "good evening",
 ];
 
 const SIGN_OFFS: &[&str] = &[
-    "thanks", "thank you", "best regards", "kind regards", "warm regards", "best",
-    "regards", "cheers", "sincerely", "talk soon",
+    "thanks",
+    "thank you",
+    "best regards",
+    "kind regards",
+    "warm regards",
+    "best",
+    "regards",
+    "cheers",
+    "sincerely",
+    "talk soon",
 ];
 
 /// Greetings longer than this many words are treated as body content
@@ -79,7 +93,11 @@ fn strip_bullet_marker(sentence: &str) -> Option<String> {
         if starts_with_phrase(&lower, &[marker]) {
             // Cut at the marker's word count to keep original casing.
             let n = marker.split(' ').count();
-            let rest = sentence.split_whitespace().skip(n).collect::<Vec<_>>().join(" ");
+            let rest = sentence
+                .split_whitespace()
+                .skip(n)
+                .collect::<Vec<_>>()
+                .join(" ");
             let bare = rest.trim_start_matches([',', ':']).trim();
             if !bare.is_empty() {
                 return Some(bare.to_string());
@@ -148,7 +166,9 @@ fn is_bare_greeting(s: &str) -> bool {
         .split(|c: char| !c.is_alphanumeric() && c != '\'')
         .filter(|w| !w.is_empty())
         .collect();
-    GREETINGS.iter().any(|p| p.split(' ').collect::<Vec<_>>() == words)
+    GREETINGS
+        .iter()
+        .any(|p| p.split(' ').collect::<Vec<_>>() == words)
 }
 
 /// Whisper writes the vocative comma — "Hi, Maria" — because that is what the
@@ -176,11 +196,18 @@ fn strip_vocative_comma(sentence: &str) -> String {
     if words.is_empty() || words.len() > 2 {
         return sentence.to_string();
     }
-    let first = words[0].split('\'').next().unwrap_or(words[0]).to_lowercase();
+    let first = words[0]
+        .split('\'')
+        .next()
+        .unwrap_or(words[0])
+        .to_lowercase();
     if NOT_A_NAME.contains(&first.as_str()) {
         return sentence.to_string();
     }
-    if !words.iter().all(|w| w.chars().next().is_some_and(char::is_uppercase)) {
+    if !words
+        .iter()
+        .all(|w| w.chars().next().is_some_and(char::is_uppercase))
+    {
         return sentence.to_string();
     }
 
@@ -212,23 +239,23 @@ fn split_comma_sign_off(sentence: &str) -> Option<(String, String, Option<String
     let bare = |s: &str| s.trim_end_matches(['.', '!', '?']).to_string();
 
     let last = clauses[clauses.len() - 1];
-    let (body_end, sign_off, name) =
-        if starts_with_phrase(last, SIGN_OFFS) && word_count(last) <= 4 {
-            (clauses.len() - 1, capitalize_first(last), None)
-        } else if clauses.len() >= 3 && word_count(last) <= 2 {
-            let prev = clauses[clauses.len() - 2];
-            if starts_with_phrase(prev, SIGN_OFFS) && word_count(prev) <= 4 {
-                (
-                    clauses.len() - 2,
-                    format!("{},", capitalize_first(&bare(prev))),
-                    Some(last.to_string()),
-                )
-            } else {
-                return None;
-            }
+    let (body_end, sign_off, name) = if starts_with_phrase(last, SIGN_OFFS) && word_count(last) <= 4
+    {
+        (clauses.len() - 1, capitalize_first(last), None)
+    } else if clauses.len() >= 3 && word_count(last) <= 2 {
+        let prev = clauses[clauses.len() - 2];
+        if starts_with_phrase(prev, SIGN_OFFS) && word_count(prev) <= 4 {
+            (
+                clauses.len() - 2,
+                format!("{},", capitalize_first(&bare(prev))),
+                Some(last.to_string()),
+            )
         } else {
             return None;
-        };
+        }
+    } else {
+        return None;
+    };
 
     let mut body = clauses[..body_end].join(", ");
     if !body.ends_with(['.', '!', '?']) {
@@ -310,7 +337,10 @@ mod tests {
 
     #[test]
     fn none_mode_is_passthrough() {
-        assert_eq!(apply("Hi team. All good.", StructureMode::None), "Hi team. All good.");
+        assert_eq!(
+            apply("Hi team. All good.", StructureMode::None),
+            "Hi team. All good."
+        );
     }
 
     #[test]
@@ -331,8 +361,14 @@ mod tests {
 
     #[test]
     fn sign_off_without_name() {
-        let out = apply("Hello team. Quick update on the launch. Best regards.", StructureMode::Email);
-        assert_eq!(out, "Hello team.\n\nQuick update on the launch.\n\nBest regards.");
+        let out = apply(
+            "Hello team. Quick update on the launch. Best regards.",
+            StructureMode::Email,
+        );
+        assert_eq!(
+            out,
+            "Hello team.\n\nQuick update on the launch.\n\nBest regards."
+        );
     }
 
     #[test]
@@ -365,14 +401,20 @@ mod tests {
 
     #[test]
     fn keeps_a_two_word_name_together() {
-        let out = apply("Hi, Maria Lopez. The report is ready.", StructureMode::Email);
+        let out = apply(
+            "Hi, Maria Lopez. The report is ready.",
+            StructureMode::Email,
+        );
         assert_eq!(out, "Hi Maria Lopez.\n\nThe report is ready.");
     }
 
     #[test]
     fn keeps_the_comma_when_what_follows_is_not_a_name() {
         // "Hi, I reviewed…" — the comma separates clauses, not a name.
-        let out = apply("Hi, I reviewed the proposal this morning.", StructureMode::Email);
+        let out = apply(
+            "Hi, I reviewed the proposal this morning.",
+            StructureMode::Email,
+        );
         assert!(
             out.starts_with("Hi,"),
             "expected the clause comma to survive, got {out:?}"
@@ -390,7 +432,10 @@ mod tests {
 
     #[test]
     fn strips_the_comma_after_a_two_word_greeting() {
-        let out = apply("Good morning, Maria. The report is ready.", StructureMode::Email);
+        let out = apply(
+            "Good morning, Maria. The report is ready.",
+            StructureMode::Email,
+        );
         assert_eq!(out, "Good morning Maria.\n\nThe report is ready.");
     }
 
@@ -404,7 +449,8 @@ mod tests {
     fn long_hi_sentence_is_body_not_greeting() {
         let input = "Hi everyone I wanted to flag the migration slipping to Friday.";
         let out = apply(input, StructureMode::Email);
-        assert!(!out.starts_with("Hi everyone I wanted to flag the migration slipping to Friday.\n\n\n"));
+        assert!(!out
+            .starts_with("Hi everyone I wanted to flag the migration slipping to Friday.\n\n\n"));
         assert_eq!(out, input); // single body sentence, no splits
     }
 
@@ -501,7 +547,10 @@ mod tests {
     #[test]
     fn coding_mode_bare_marker_is_kept_as_text() {
         // "Bullet point." with nothing after it isn't a list item.
-        assert_eq!(apply("Bullet point.", StructureMode::Coding), "Bullet point.");
+        assert_eq!(
+            apply("Bullet point.", StructureMode::Coding),
+            "Bullet point."
+        );
     }
 
     #[test]

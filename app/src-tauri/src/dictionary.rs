@@ -75,7 +75,10 @@ impl Dictionary {
             {
                 continue;
             }
-            entries.push(Entry { term: t.to_string(), expansion: None });
+            entries.push(Entry {
+                term: t.to_string(),
+                expansion: None,
+            });
         }
         entries.extend(self.entries.iter().cloned());
         Dictionary { entries }
@@ -91,7 +94,10 @@ mod tests {
         let d = Dictionary::parse("# comment\n\nSKU = stock keeping unit\nQBR\n  \n");
         assert_eq!(d.entries.len(), 2);
         assert_eq!(d.entries[0].term, "SKU");
-        assert_eq!(d.entries[0].expansion.as_deref(), Some("stock keeping unit"));
+        assert_eq!(
+            d.entries[0].expansion.as_deref(),
+            Some("stock keeping unit")
+        );
         assert_eq!(d.entries[1].term, "QBR");
         assert_eq!(d.entries[1].expansion, None);
     }

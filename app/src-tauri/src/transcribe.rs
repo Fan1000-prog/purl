@@ -117,7 +117,10 @@ mod tests {
     #[test]
     fn normalize_joins_lines_and_trims() {
         let raw = " Hey team, the QBR deck\n is in the shared drive.\n\n";
-        assert_eq!(normalize(raw), "Hey team, the QBR deck is in the shared drive.");
+        assert_eq!(
+            normalize(raw),
+            "Hey team, the QBR deck is in the shared drive."
+        );
     }
 
     #[test]

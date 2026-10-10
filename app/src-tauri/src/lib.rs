@@ -5,10 +5,10 @@ mod cloud_llm;
 mod corrections;
 mod dictionary;
 mod fastclean;
-mod ollama_pull;
 mod history;
 mod inject;
 mod learned;
+mod ollama_pull;
 mod secrets;
 mod settings;
 mod snippets;
@@ -125,7 +125,11 @@ fn learned_path(app: &AppHandle) -> std::path::PathBuf {
 /// cloud failure passes `AiEngine::Local` here even though
 /// `settings.ai_engine` still says otherwise, because it is Ollama, not the
 /// cloud provider, that is about to receive the terms.
-fn llm_terms_for(engine: AiEngine, base: &dictionary::Dictionary, local: &dictionary::Dictionary) -> String {
+fn llm_terms_for(
+    engine: AiEngine,
+    base: &dictionary::Dictionary,
+    local: &dictionary::Dictionary,
+) -> String {
     match engine {
         AiEngine::Local => local.llm_terms(),
         _ => base.llm_terms(),
@@ -152,12 +156,7 @@ fn log_line(app: &AppHandle, msg: &str) {
 }
 
 fn notify(app: &AppHandle, body: &str) {
-    let _ = app
-        .notification()
-        .builder()
-        .title("Purl")
-        .body(body)
-        .show();
+    let _ = app.notification().builder().title("Purl").body(body).show();
 }
 
 fn set_state(app: &AppHandle, state: &str) {
@@ -339,13 +338,7 @@ fn cursor_over_overlay(overlay: &tauri::WebviewWindow, rect: [f64; 4]) -> bool {
 fn spawn_level_emitter(app: AppHandle, level: std::sync::Arc<std::sync::atomic::AtomicU32>) {
     std::thread::spawn(move || {
         loop {
-            if app
-                .state::<AppState>()
-                .recorder
-                .lock()
-                .unwrap()
-                .is_none()
-            {
+            if app.state::<AppState>().recorder.lock().unwrap().is_none() {
                 break;
             }
             let rms = f32::from_bits(level.load(std::sync::atomic::Ordering::Relaxed));
@@ -610,7 +603,10 @@ fn on_hotkey(app: &AppHandle, shortcut_state: ShortcutState) {
                 return; // nothing recording (e.g. start failed)
             }
             if held.map_or(false, |d| d < MIN_HOLD) {
-                log_line(app, "hotkey: tap shorter than MIN_HOLD — recording discarded");
+                log_line(
+                    app,
+                    "hotkey: tap shorter than MIN_HOLD — recording discarded",
+                );
                 cancel_dictation_impl(app);
             } else {
                 stop_and_transcribe(app);
@@ -646,7 +642,10 @@ fn ensure_whisper_server(app: &AppHandle) {
             log_line(app, "whisper-server: started (model resident)");
             *slot = Some(s);
         }
-        Err(e) => log_line(app, &format!("whisper-server: spawn failed: {e} — using CLI")),
+        Err(e) => log_line(
+            app,
+            &format!("whisper-server: spawn failed: {e} — using CLI"),
+        ),
     }
 }
 
@@ -678,7 +677,12 @@ fn start_dictation(app: &AppHandle) {
                 // Covers whisper-server crash/model-change since startup;
                 // spawning is instant and the model loads while they talk.
                 ensure_whisper_server(&warm_app);
-                let settings = warm_app.state::<AppState>().settings.lock().unwrap().clone();
+                let settings = warm_app
+                    .state::<AppState>()
+                    .settings
+                    .lock()
+                    .unwrap()
+                    .clone();
                 if settings.cleanup_mode == CleanupMode::Ai {
                     let dictionary = load_dictionary(&warm_app);
                     // Must match what `run_pipeline` sends to `cleanup::clean` for
@@ -689,7 +693,8 @@ fn start_dictation(app: &AppHandle) {
                     } else {
                         Vec::new()
                     };
-                    let local_dictionary = dictionary.with_extra_terms(&learned::glossary_terms(&rules));
+                    let local_dictionary =
+                        dictionary.with_extra_terms(&learned::glossary_terms(&rules));
                     cleanup::prewarm(
                         &local_dictionary.llm_terms(),
                         &settings.ollama_model,
@@ -741,7 +746,11 @@ fn stop_and_transcribe(app: &AppHandle) {
 
 /// Discard the in-flight recording without transcribing.
 fn cancel_dictation_impl(app: &AppHandle) {
-    app.state::<AppState>().recording_started.lock().unwrap().take();
+    app.state::<AppState>()
+        .recording_started
+        .lock()
+        .unwrap()
+        .take();
     let state = app.state::<AppState>();
     if let Some(rec) = state.recorder.lock().unwrap().take() {
         rec.cancel();
@@ -752,12 +761,7 @@ fn cancel_dictation_impl(app: &AppHandle) {
 
 /// Tray / in-app toggle: start when idle, stop + transcribe when recording.
 fn toggle_dictation(app: &AppHandle) {
-    let recording = app
-        .state::<AppState>()
-        .recorder
-        .lock()
-        .unwrap()
-        .is_some();
+    let recording = app.state::<AppState>().recorder.lock().unwrap().is_some();
     if recording {
         stop_and_transcribe(app);
     } else {
@@ -772,7 +776,10 @@ fn run_transform(app: &AppHandle, t: transforms::Transform) {
     {
         let mut processing = state.processing.lock().unwrap();
         if *processing || state.recorder.lock().unwrap().is_some() {
-            notify(app, "Busy with another dictation or transform — one moment.");
+            notify(
+                app,
+                "Busy with another dictation or transform — one moment.",
+            );
             return;
         }
         *processing = true;
@@ -824,8 +831,8 @@ fn run_transform_pipeline(app: &AppHandle, t: &transforms::Transform) -> Result<
     });
     let t0 = std::time::Instant::now();
 
-    let (selection, previous) = inject::capture_selection()
-        .map_err(|e| format!("Couldn't read the selection: {e}"))?;
+    let (selection, previous) =
+        inject::capture_selection().map_err(|e| format!("Couldn't read the selection: {e}"))?;
     let Some(text) = selection else {
         return Err("Select some text first, then press the transform hotkey.".into());
     };
@@ -912,12 +919,13 @@ fn run_pipeline(app: &AppHandle, recorder: Recorder, record_ms: u64) -> Result<(
             Ok(text)
         }
         Some(Err(e)) => {
-            log_line(app, &format!("transcribe: server failed ({e}) -> CLI fallback"));
-            transcribe::transcribe(&wav, &model, &whisper_bin, "")
-                .map_err(|e| e.to_string())
+            log_line(
+                app,
+                &format!("transcribe: server failed ({e}) -> CLI fallback"),
+            );
+            transcribe::transcribe(&wav, &model, &whisper_bin, "").map_err(|e| e.to_string())
         }
-        None => transcribe::transcribe(&wav, &model, &whisper_bin, "")
-            .map_err(|e| e.to_string()),
+        None => transcribe::transcribe(&wav, &model, &whisper_bin, "").map_err(|e| e.to_string()),
     };
     // Audio never persists past transcription.
     let _ = std::fs::remove_file(&wav);
@@ -964,7 +972,10 @@ fn run_pipeline(app: &AppHandle, recorder: Recorder, record_ms: u64) -> Result<(
                         .as_deref()
                         .map(|n| cloud_llm::error_head(n).to_string())
                         .unwrap_or_else(|| "unknown error".into());
-                    log_line(app, &format!("cloud cleanup failed ({why}) -> local Ollama"));
+                    log_line(
+                        app,
+                        &format!("cloud cleanup failed ({why}) -> local Ollama"),
+                    );
                     let mut local = cleanup::clean(
                         &raw,
                         &llm_terms_for(AiEngine::Local, &dictionary, &local_dictionary),
@@ -973,7 +984,10 @@ fn run_pipeline(app: &AppHandle, recorder: Recorder, record_ms: u64) -> Result<(
                     );
                     // Rung 3: if local did not run either, do not claim it did.
                     local.note = Some(if local.used_llm {
-                        format!("{} failed ({why}); cleaned locally instead", provider.label())
+                        format!(
+                            "{} failed ({why}); cleaned locally instead",
+                            provider.label()
+                        )
                     } else {
                         format!(
                             "{} and local cleanup both failed ({why}); pasted your words unchanged",
@@ -1081,7 +1095,10 @@ fn run_pipeline(app: &AppHandle, recorder: Recorder, record_ms: u64) -> Result<(
                 }
                 log_line(app, "inject: all segments sent OK");
             } else {
-                log_line(app, "inject: NOT accessibility trusted -> clipboard fallback");
+                log_line(
+                    app,
+                    "inject: NOT accessibility trusted -> clipboard fallback",
+                );
                 inject::copy_to_clipboard(&expanded)
                     .map_err(|e| format!("Clipboard failed: {e}"))?;
                 notify(
@@ -1092,8 +1109,7 @@ fn run_pipeline(app: &AppHandle, recorder: Recorder, record_ms: u64) -> Result<(
         }
         InjectMode::ClipboardOnly => {
             log_line(app, "inject: clipboard-only mode");
-            inject::copy_to_clipboard(&expanded)
-                .map_err(|e| format!("Clipboard failed: {e}"))?;
+            inject::copy_to_clipboard(&expanded).map_err(|e| format!("Clipboard failed: {e}"))?;
             if has_key_commands {
                 notify(
                     app,
@@ -1168,7 +1184,10 @@ fn save_settings(app: AppHandle, new_settings: Settings) -> Result<(), String> {
     // `load` sanitizes these, but nothing stopped a bad value from being
     // persisted and used for the rest of the session.
     if !settings::is_allowed_model(&new_settings.ollama_model) {
-        return Err(format!("Unknown local model: {}", new_settings.ollama_model));
+        return Err(format!(
+            "Unknown local model: {}",
+            new_settings.ollama_model
+        ));
     }
     if !settings::is_allowed_cloud_model(&new_settings.claude_model)
         || !settings::is_allowed_cloud_model(&new_settings.gemini_model)
@@ -1259,7 +1278,10 @@ fn test_cloud_key(engine: String, model: String) -> Result<(), String> {
 enum SwapError {
     NewRejected(String),
     /// Neither combo is registered — the caller must tell the user.
-    NoneActive { new_err: String, old_err: String },
+    NoneActive {
+        new_err: String,
+        old_err: String,
+    },
 }
 
 /// Swap the registered global shortcut from `old` to `new`. If `new` can't
@@ -1333,8 +1355,14 @@ fn set_hotkey(app: AppHandle, new_hotkey: String) -> Result<(), String> {
     if let Err(e) = settings.save(&path) {
         // Keep OS registration consistent with the settings we're keeping.
         match swap_shortcut(&mut register, &mut unregister, &new_hotkey, &old) {
-            Ok(()) => log_line(&app, &format!("set_hotkey: save failed, reverted to {old}: {e}")),
-            Err(_) => log_line(&app, &format!("set_hotkey: save failed AND revert to {old} failed: {e}")),
+            Ok(()) => log_line(
+                &app,
+                &format!("set_hotkey: save failed, reverted to {old}: {e}"),
+            ),
+            Err(_) => log_line(
+                &app,
+                &format!("set_hotkey: save failed AND revert to {old} failed: {e}"),
+            ),
         }
         return Err(format!("Couldn't save the new hotkey: {e}"));
     }
@@ -1425,7 +1453,10 @@ fn apply_transforms(app: &AppHandle, list: Vec<transforms::Transform>) -> Result
     for t in &list {
         if let Some(hk) = t.hotkey.as_deref() {
             if let Err(e) = gs.register(hk) {
-                log_line(app, &format!("transform hotkey {hk} failed to register: {e}"));
+                log_line(
+                    app,
+                    &format!("transform hotkey {hk} failed to register: {e}"),
+                );
                 failures.push(format!("{} ({hk})", t.name));
             }
         }
@@ -1582,7 +1613,12 @@ fn get_learned_rules(app: AppHandle) -> Vec<LearnedRuleView> {
 }
 
 #[tauri::command]
-fn delete_learned_rule(app: AppHandle, from: String, to: String, before: String) -> Result<(), String> {
+fn delete_learned_rule(
+    app: AppHandle,
+    from: String,
+    to: String,
+    before: String,
+) -> Result<(), String> {
     learned::delete(&learned_path(&app), &from, &to, &before).map_err(|e| e.to_string())
 }
 
@@ -1757,11 +1793,7 @@ mod hotkey_swap_tests {
     use super::{swap_shortcut, SwapError};
 
     /// Test harness: `fails` is the set of combos whose registration errors.
-    fn run(
-        fails: &[&str],
-        old: &str,
-        new: &str,
-    ) -> (Result<(), SwapError>, Vec<String>) {
+    fn run(fails: &[&str], old: &str, new: &str) -> (Result<(), SwapError>, Vec<String>) {
         let fails: Vec<String> = fails.iter().map(|s| s.to_string()).collect();
         let mut log: Vec<String> = Vec::new();
         let result = {
@@ -1824,8 +1856,14 @@ mod cloud_command_tests {
 
     #[test]
     fn engine_name_maps_to_provider_or_errors() {
-        assert_eq!(provider_from_name("gemini").unwrap(), cloud_llm::CloudProvider::Gemini);
-        assert_eq!(provider_from_name("claude").unwrap(), cloud_llm::CloudProvider::Claude);
+        assert_eq!(
+            provider_from_name("gemini").unwrap(),
+            cloud_llm::CloudProvider::Gemini
+        );
+        assert_eq!(
+            provider_from_name("claude").unwrap(),
+            cloud_llm::CloudProvider::Claude
+        );
         // "local" has no key to manage — an explicit error beats a silent no-op.
         assert!(provider_from_name("local").is_err());
         assert!(provider_from_name("nonsense").is_err());
@@ -1977,7 +2015,11 @@ mod correction_watch_tests {
     use std::time::Duration;
 
     fn snap(value: &str) -> Snapshot {
-        Snapshot { id: "1:AXTextArea:Compose".into(), value: value.into(), secure: false }
+        Snapshot {
+            id: "1:AXTextArea:Compose".into(),
+            value: value.into(),
+            secure: false,
+        }
     }
 
     /// Returns each queued snapshot in turn, then `None` forever. Counts

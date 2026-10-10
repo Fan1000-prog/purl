@@ -82,11 +82,7 @@ const CODING_EXAMPLE_3_ASSISTANT: &str =
 /// The message list sent to Ollama. The system + few-shot prefix must be
 /// byte-identical between `prewarm` and `try_clean` — Ollama reuses its KV
 /// cache on a matching prefix, which is where the latency win comes from.
-fn build_messages<'a>(
-    system: &'a str,
-    user: &'a str,
-    mode: StructureMode,
-) -> Vec<ChatMessage<'a>> {
+fn build_messages<'a>(system: &'a str, user: &'a str, mode: StructureMode) -> Vec<ChatMessage<'a>> {
     let examples: &[(&str, &str)] = if mode == StructureMode::Coding {
         &[
             (CODING_EXAMPLE_1_USER, CODING_EXAMPLE_1_ASSISTANT),
@@ -104,12 +100,24 @@ fn build_messages<'a>(
             (EXAMPLE_7_USER, EXAMPLE_7_ASSISTANT),
         ]
     };
-    let mut messages = vec![ChatMessage { role: "system", content: system }];
+    let mut messages = vec![ChatMessage {
+        role: "system",
+        content: system,
+    }];
     for &(u, a) in examples {
-        messages.push(ChatMessage { role: "user", content: u });
-        messages.push(ChatMessage { role: "assistant", content: a });
+        messages.push(ChatMessage {
+            role: "user",
+            content: u,
+        });
+        messages.push(ChatMessage {
+            role: "assistant",
+            content: a,
+        });
     }
-    messages.push(ChatMessage { role: "user", content: user });
+    messages.push(ChatMessage {
+        role: "user",
+        content: user,
+    });
     messages
 }
 
@@ -127,7 +135,10 @@ pub fn prewarm(glossary_terms: &str, model: &str, mode: StructureMode) {
         options: serde_json::json!({ "temperature": 0.1, "num_predict": 1 }),
         messages: build_messages(&system, "<transcript>\nwarm up\n</transcript>", mode),
     };
-    if let Ok(client) = reqwest::blocking::Client::builder().timeout(TIMEOUT).build() {
+    if let Ok(client) = reqwest::blocking::Client::builder()
+        .timeout(TIMEOUT)
+        .build()
+    {
         let _ = client
             .post(format!("{OLLAMA_URL}/api/chat"))
             .json(&req)
@@ -431,7 +442,11 @@ mod tests {
             // Subject-verb. From a real dictation that reached the user
             // uncorrected because cleanup_mode was Fast, not because the
             // model could not do it.
-            ("she have asked about the report", "she has asked", "she have"),
+            (
+                "she have asked about the report",
+                "she has asked",
+                "she have",
+            ),
             // Dropped plural — the originally reported bug.
             (
                 "we need to merge these two account before friday",
@@ -492,8 +507,14 @@ mod tests {
     fn system_prompt_states_the_agreement_rule() {
         let p = build_system_prompt("- SKU (stock keeping unit)", StructureMode::None);
         // The three enumerated categories, and only these three.
-        assert!(p.contains("number agreement"), "missing number agreement rule");
-        assert!(p.contains("subject-verb agreement"), "missing subject-verb rule");
+        assert!(
+            p.contains("number agreement"),
+            "missing number agreement rule"
+        );
+        assert!(
+            p.contains("subject-verb agreement"),
+            "missing subject-verb rule"
+        );
         assert!(p.contains("articles"), "missing article rule");
         // Bounded, not a general "fix the grammar" licence — that regressed
         // the Polish transform in 3869f523.
@@ -531,7 +552,12 @@ mod tests {
     #[test]
     fn unreachable_model_falls_back_to_raw() {
         // Bogus model name → Ollama 404s (or is down) → raw text survives.
-        let r = clean("um hello world", "- SKU", "definitely-not-a-model:0b", StructureMode::None);
+        let r = clean(
+            "um hello world",
+            "- SKU",
+            "definitely-not-a-model:0b",
+            StructureMode::None,
+        );
         assert_eq!(r.text, "um hello world");
         assert!(!r.used_llm);
         assert!(r.note.is_some());
@@ -679,26 +705,51 @@ mod tests {
             return;
         }
         let lower = r.text.to_lowercase();
-        assert!(lower.contains("too tough"), "homophone not corrected: {}", r.text);
-        assert!(!lower.contains("two staff"), "garbled phrase survived: {}", r.text);
+        assert!(
+            lower.contains("too tough"),
+            "homophone not corrected: {}",
+            r.text
+        );
+        assert!(
+            !lower.contains("two staff"),
+            "garbled phrase survived: {}",
+            r.text
+        );
     }
 
     #[test]
     fn agreement_few_shots_are_in_the_prefix() {
         let system = build_system_prompt("- SKU", StructureMode::None);
-        let msgs = build_messages(&system, "<transcript>\nhi\n</transcript>", StructureMode::None);
+        let msgs = build_messages(
+            &system,
+            "<transcript>\nhi\n</transcript>",
+            StructureMode::None,
+        );
         // 1 system + 7 example pairs + 1 user turn.
         assert_eq!(msgs.len(), 16, "expected 7 few-shot pairs");
         let all: String = msgs.iter().map(|m| m.content).collect();
-        assert!(all.contains("these two account"), "missing dropped-plural example input");
-        assert!(all.contains("these two accounts"), "missing dropped-plural example output");
-        assert!(all.contains("has already approved"), "missing subject-verb example output");
+        assert!(
+            all.contains("these two account"),
+            "missing dropped-plural example input"
+        );
+        assert!(
+            all.contains("these two accounts"),
+            "missing dropped-plural example output"
+        );
+        assert!(
+            all.contains("has already approved"),
+            "missing subject-verb example output"
+        );
     }
 
     #[test]
     fn coding_mode_keeps_its_own_three_examples() {
         let system = build_system_prompt("- SKU", StructureMode::Coding);
-        let msgs = build_messages(&system, "<transcript>\nhi\n</transcript>", StructureMode::Coding);
+        let msgs = build_messages(
+            &system,
+            "<transcript>\nhi\n</transcript>",
+            StructureMode::Coding,
+        );
         // 1 system + 3 coding pairs + 1 user turn — agreement examples do not
         // displace the technical-casing anchors.
         assert_eq!(msgs.len(), 8);
@@ -713,8 +764,16 @@ mod tests {
     #[test]
     fn message_prefix_is_independent_of_the_transcript() {
         let system = build_system_prompt("- SKU", StructureMode::None);
-        let a = build_messages(&system, "<transcript>\nwarm up\n</transcript>", StructureMode::None);
-        let b = build_messages(&system, "<transcript>\nsomething else entirely\n</transcript>", StructureMode::None);
+        let a = build_messages(
+            &system,
+            "<transcript>\nwarm up\n</transcript>",
+            StructureMode::None,
+        );
+        let b = build_messages(
+            &system,
+            "<transcript>\nsomething else entirely\n</transcript>",
+            StructureMode::None,
+        );
         let prefix = |m: &Vec<ChatMessage>| serde_json::to_string(&m[..m.len() - 1]).unwrap();
         assert_eq!(prefix(&a), prefix(&b));
     }

@@ -83,7 +83,10 @@ pub fn save(path: &Path, rules: &[Rule]) -> std::io::Result<()> {
 pub fn add(path: &Path, c: &Correction, now: u64) -> std::io::Result<()> {
     let _guard = STORE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut rules = load(path);
-    if let Some(existing) = rules.iter_mut().find(|r| r.same_as(&c.from, &c.to, &c.before)) {
+    if let Some(existing) = rules
+        .iter_mut()
+        .find(|r| r.same_as(&c.from, &c.to, &c.before))
+    {
         existing.seen += 1;
         existing.last_hit = now;
         return save(path, &rules);
@@ -119,7 +122,10 @@ pub fn add(path: &Path, c: &Correction, now: u64) -> std::io::Result<()> {
 pub fn retract(path: &Path, c: &Correction) -> std::io::Result<()> {
     let _guard = STORE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut rules = load(path);
-    if let Some(i) = rules.iter().position(|r| r.same_as(&c.from, &c.to, &c.before)) {
+    if let Some(i) = rules
+        .iter()
+        .position(|r| r.same_as(&c.from, &c.to, &c.before))
+    {
         if rules[i].seen > 1 {
             rules[i].seen -= 1;
         } else {
@@ -304,7 +310,10 @@ pub fn record_hits(path: &Path, fired: &[Rule], now: u64) -> std::io::Result<()>
     let _guard = STORE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut rules = load(path);
     for f in fired {
-        if let Some(r) = rules.iter_mut().find(|r| r.same_as(&f.from, &f.to, &f.before)) {
+        if let Some(r) = rules
+            .iter_mut()
+            .find(|r| r.same_as(&f.from, &f.to, &f.before))
+        {
             r.hits += 1;
             r.last_hit = now;
         }
@@ -421,7 +430,10 @@ mod tests {
         add(&path, &fix("fun", "Fan"), 100).unwrap();
         {
             use std::io::Write;
-            let mut f = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+            let mut f = std::fs::OpenOptions::new()
+                .append(true)
+                .open(&path)
+                .unwrap();
             writeln!(f, "{{not json").unwrap();
         }
         assert_eq!(load(&path).len(), 1);
@@ -544,9 +556,15 @@ mod tests {
     #[test]
     fn a_word_choice_rule_waits_for_a_second_sighting() {
         let mut r = rule("utilize", "use", "should", "");
-        assert_eq!(apply("we should utilize this", &[r.clone()]).0, "we should utilize this");
+        assert_eq!(
+            apply("we should utilize this", &[r.clone()]).0,
+            "we should utilize this"
+        );
         r.seen = 2;
-        assert_eq!(apply("we should utilize this", &[r]).0, "we should use this");
+        assert_eq!(
+            apply("we should utilize this", &[r]).0,
+            "we should use this"
+        );
     }
 
     #[test]
@@ -572,14 +590,24 @@ mod tests {
             rule("fon", "Fan", "^", ""),
             rule("pid", "PID", "the", ""),
         ];
-        assert_eq!(glossary_terms(&rules), vec!["Fan".to_string(), "PID".to_string()]);
+        assert_eq!(
+            glossary_terms(&rules),
+            vec!["Fan".to_string(), "PID".to_string()]
+        );
     }
 
     #[test]
     fn record_hits_increments_only_the_rules_that_fired() {
         let path = tmp("hits");
         let _ = std::fs::remove_file(&path);
-        save(&path, &[rule("fun", "Fan", "regards", ""), rule("pid", "PID", "the", "")]).unwrap();
+        save(
+            &path,
+            &[
+                rule("fun", "Fan", "regards", ""),
+                rule("pid", "PID", "the", ""),
+            ],
+        )
+        .unwrap();
         record_hits(&path, &[rule("pid", "PID", "the", "")], 555).unwrap();
         let rules = load(&path);
         assert_eq!(rules[0].hits, 0);

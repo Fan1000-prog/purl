@@ -71,11 +71,21 @@ pub fn stream_pull(model: &str, mut on_event: impl FnMut(PullEvent)) {
     let resp = match resp {
         Ok(r) if r.status().is_success() => r,
         Ok(r) => {
-            on_event(emit(0, String::new(), true, Some(format!("Ollama returned {}", r.status()))));
+            on_event(emit(
+                0,
+                String::new(),
+                true,
+                Some(format!("Ollama returned {}", r.status())),
+            ));
             return;
         }
         Err(e) => {
-            on_event(emit(0, String::new(), true, Some(format!("Ollama unreachable: {e}"))));
+            on_event(emit(
+                0,
+                String::new(),
+                true,
+                Some(format!("Ollama unreachable: {e}")),
+            ));
             return;
         }
     };

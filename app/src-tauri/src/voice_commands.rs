@@ -98,7 +98,9 @@ pub fn parse(text: &str) -> Vec<Segment> {
             let is_break = !at_end
                 && (".!?".contains(bytes[i].1)
                     || (bytes[i].1 == ','
-                        && bytes.get(i + 1).is_none_or(|(_, next)| next.is_whitespace())));
+                        && bytes
+                            .get(i + 1)
+                            .is_none_or(|(_, next)| next.is_whitespace())));
             if at_end || is_break {
                 let end = if at_end { line.len() } else { bytes[i].0 + 1 };
                 let chunk = &line[chunk_start..end];
