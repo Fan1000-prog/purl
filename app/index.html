@@ -2,7 +2,10 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <link rel="stylesheet" href="/src/styles/tokens.css" />
+    <link rel="stylesheet" href="/src/styles/base.css" />
     <link rel="stylesheet" href="/src/styles.css" />
+    <link rel="icon" type="image/svg+xml" href="/brand/purl-favicon-colour.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Purl</title>
     <script type="module" src="/src/main.ts" defer></script>
@@ -13,19 +16,11 @@
       <nav class="sidebar">
         <div class="brand">
           <div class="brand-row">
-            <svg class="brand-logo" width="30" height="30" viewBox="0 0 32 32" aria-hidden="true">
-              <circle cx="16" cy="16" r="12" fill="none" stroke="#201b14" stroke-width="2.6" />
-              <g stroke="#201b14" stroke-width="1.8" stroke-linecap="round">
-                <line x1="25" y1="16" x2="27.2" y2="16" transform="rotate(0 16 16)" />
-                <line x1="25" y1="16" x2="27.2" y2="16" transform="rotate(45 16 16)" />
-                <line x1="25" y1="16" x2="27.2" y2="16" transform="rotate(90 16 16)" />
-                <line x1="25" y1="16" x2="27.2" y2="16" transform="rotate(135 16 16)" />
-                <line x1="25" y1="16" x2="27.2" y2="16" transform="rotate(180 16 16)" />
-                <line x1="25" y1="16" x2="27.2" y2="16" transform="rotate(225 16 16)" />
-                <line x1="25" y1="16" x2="27.2" y2="16" transform="rotate(270 16 16)" />
-                <line x1="25" y1="16" x2="27.2" y2="16" transform="rotate(315 16 16)" />
-              </g>
-              <circle cx="16" cy="16" r="6.5" fill="#2E9A63" />
+            <!-- purl-mark-transparent from the logo pack, Ink stroke as currentColor so it follows the theme -->
+            <svg class="brand-logo" width="30" height="30" viewBox="135 80 310 380" aria-hidden="true">
+              <path d="M178 426 V218 A112 112 0 1 1 237.39 324.52" fill="none" stroke="currentColor" stroke-width="50" stroke-linecap="round" stroke-linejoin="round" />
+              <circle cx="264" cy="218" r="28" fill="var(--terracotta)" />
+              <path d="M306.6 184.8 A54 54 0 0 1 306.6 251.2" fill="none" stroke="var(--accent)" stroke-width="26" stroke-linecap="round" />
             </svg>
             <h1>Purl</h1>
           </div>
