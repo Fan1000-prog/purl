@@ -831,10 +831,20 @@ fn run_transform_pipeline(app: &AppHandle, t: &transforms::Transform) -> Result<
     };
 
     // The selection is still highlighted in the target app, so the paste
-    // replaces it in place.
-    let paste = inject::inject(&out);
+    // replaces it in place. If the paste fails, `inject` leaves the result on
+    // the clipboard; keep it there rather than restoring the old clipboard.
+    if let Err(e) = inject::inject(&out) {
+        log_line(
+            app,
+            &format!("transform paste FAILED: {e} -> clipboard fallback"),
+        );
+        return Err(format!(
+            "Couldn't paste the {} result, so it's on your clipboard — paste with {}.",
+            t.name,
+            platform::PASTE_SHORTCUT
+        ));
+    }
     inject::restore_clipboard(&previous);
-    paste.map_err(|e| format!("Paste failed: {e}"))?;
 
     log_line(
         app,
@@ -847,6 +857,44 @@ fn run_transform_pipeline(app: &AppHandle, t: &transforms::Transform) -> Result<
         ),
     );
     Ok(())
+}
+
+/// How a dictation reached the user in paste mode.
+#[derive(Debug, PartialEq)]
+enum Delivery {
+    /// Every text segment pasted and every command key sent.
+    Sent,
+    /// A paste or key failed (typically Windows UIPI: the target runs as
+    /// administrator), so the whole dictation went to the clipboard instead.
+    /// Holds the failure, for the log.
+    Copied(String),
+}
+
+/// Paste text segments and send command keys ("go down" → ↓) in order, with
+/// a short pause between them so the target app keeps up. On the first
+/// failure, stop and put the whole dictation (`full`) on the clipboard: the
+/// user gets all of it to paste by hand rather than half of it.
+fn deliver_segments(
+    segments: &[voice_commands::Segment],
+    full: &str,
+    paste: &mut dyn FnMut(&str) -> Result<(), inject::InjectError>,
+    key: &mut dyn FnMut(voice_commands::Key) -> Result<(), inject::InjectError>,
+    copy: &mut dyn FnMut(&str) -> Result<(), inject::InjectError>,
+) -> Result<Delivery, String> {
+    for (i, seg) in segments.iter().enumerate() {
+        if i > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(120));
+        }
+        let sent = match seg {
+            voice_commands::Segment::Text(t) => paste(t),
+            voice_commands::Segment::Key(k) => key(*k),
+        };
+        if let Err(e) = sent {
+            copy(full).map_err(|e| format!("Clipboard failed: {e}"))?;
+            return Ok(Delivery::Copied(e.to_string()));
+        }
+    }
+    Ok(Delivery::Sent)
 }
 
 /// stop recording → transcribe → clean → inject. Runs off the main thread.
@@ -989,30 +1037,24 @@ fn run_pipeline(app: &AppHandle, recorder: Recorder, record_ms: u64) -> Result<(
                     "Copied to clipboard (Purl was focused). Use the hotkey from your target app to paste automatically.",
                 );
             } else if paste_trust.can_paste() {
-                // Walk the segments in order: paste text, synthesize command
-                // keystrokes ("go down" → ↓). A short pause after each key
-                // lets the target app process it before the next paste.
-                for (i, seg) in segments.iter().enumerate() {
-                    if i > 0 {
-                        std::thread::sleep(std::time::Duration::from_millis(120));
-                    }
-                    let sent = match seg {
-                        voice_commands::Segment::Text(t) => {
-                            log_line(app, "inject: pasting via Cmd-V");
-                            inject::inject(t)
-                        }
-                        voice_commands::Segment::Key(k) => {
-                            log_line(app, &format!("inject: voice command key {k:?}"));
-                            platform::injector().send_key(*k)
-                        }
-                    };
-                    if let Err(e) = sent {
-                        // Typically Windows UIPI: the target runs as
-                        // administrator. Hand the user the whole dictation
-                        // to paste themselves rather than half of it.
+                let mut paste = |t: &str| {
+                    log_line(app, "inject: pasting via Cmd-V");
+                    inject::inject(t)
+                };
+                let mut key = |k: voice_commands::Key| {
+                    log_line(app, &format!("inject: voice command key {k:?}"));
+                    platform::injector().send_key(k)
+                };
+                match deliver_segments(
+                    &segments,
+                    &expanded,
+                    &mut paste,
+                    &mut key,
+                    &mut inject::copy_to_clipboard,
+                )? {
+                    Delivery::Sent => log_line(app, "inject: all segments sent OK"),
+                    Delivery::Copied(e) => {
                         log_line(app, &format!("inject: FAILED: {e} -> clipboard fallback"));
-                        inject::copy_to_clipboard(&expanded)
-                            .map_err(|e| format!("Clipboard failed: {e}"))?;
                         notify(
                             app,
                             &format!(
@@ -1021,11 +1063,7 @@ fn run_pipeline(app: &AppHandle, recorder: Recorder, record_ms: u64) -> Result<(
                             ),
                         );
                         paste_failed = true;
-                        break;
                     }
-                }
-                if !paste_failed {
-                    log_line(app, "inject: all segments sent OK");
                 }
             } else {
                 log_line(
@@ -2146,6 +2184,63 @@ mod platform_wiring_tests {
         assert!(try_begin_session(&busy).is_none());
         drop(first);
         assert!(try_begin_session(&busy).is_some());
+    }
+
+    use crate::inject::InjectError;
+    use crate::voice_commands::{Key, Segment};
+
+    /// Runs `deliver_segments` with fakes; `fail_at` is the call number
+    /// (paste or key, counting from 0) that fails. Returns the result and a
+    /// log of every call made.
+    fn deliver(fail_at: Option<usize>) -> (Result<Delivery, String>, Vec<String>) {
+        let segments = vec![
+            Segment::Text("hello".into()),
+            Segment::Key(Key::Return),
+            Segment::Text("world".into()),
+        ];
+        let log = std::cell::RefCell::new(Vec::new());
+        let step = |what: String| {
+            let n = log.borrow().len();
+            log.borrow_mut().push(what);
+            if Some(n) == fail_at {
+                Err(InjectError::Synthesis("blocked".into()))
+            } else {
+                Ok(())
+            }
+        };
+        let r = deliver_segments(
+            &segments,
+            "hello world",
+            &mut |t| step(format!("paste:{t}")),
+            &mut |k| step(format!("key:{k:?}")),
+            &mut |t| {
+                log.borrow_mut().push(format!("copy:{t}"));
+                Ok(())
+            },
+        );
+        (r, log.into_inner())
+    }
+
+    #[test]
+    fn segments_are_sent_in_order() {
+        let (r, log) = deliver(None);
+        assert_eq!(r, Ok(Delivery::Sent));
+        assert_eq!(log, ["paste:hello", "key:Return", "paste:world"]);
+    }
+
+    #[test]
+    fn failed_key_puts_the_whole_dictation_on_the_clipboard() {
+        let (r, log) = deliver(Some(1));
+        assert!(matches!(r, Ok(Delivery::Copied(_))));
+        // Stops at the failure: "world" is not pasted on its own.
+        assert_eq!(log, ["paste:hello", "key:Return", "copy:hello world"]);
+    }
+
+    #[test]
+    fn failed_first_paste_falls_back_too() {
+        let (r, log) = deliver(Some(0));
+        assert!(matches!(r, Ok(Delivery::Copied(_))));
+        assert_eq!(log, ["paste:hello", "copy:hello world"]);
     }
 
     /// A pipeline thread that panics mid-session must not leave Purl
