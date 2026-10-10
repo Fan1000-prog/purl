@@ -1,4 +1,4 @@
-// Home: Purl's mascot showing what's happening, the hotkey, the last
+// Home: a title and state dot showing what's happening, the hotkey, the last
 // dictation (cleaned or raw), today's stats and recent history. A banner
 // takes the top when something blocks dictation or paste.
 
@@ -7,7 +7,6 @@ import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type { EngineState, HistoryEntry } from "../types";
 import { onViewShow, prettyHotkey, switchView, type TranscriptPayload } from "../main";
-import { mountMascot, type MascotState } from "../components/mascot";
 import { mountModelDownload, type ModelDownload } from "../components/model-download";
 import { confirmButton } from "../components/confirm-button";
 import { SPEECH_MODEL, watchSpeechEngine } from "../engine";
@@ -31,25 +30,22 @@ let showRaw = false;
 let bannerDownload: ModelDownload | null = null;
 let bannerKey = "";
 
-// ---------- hero: mascot, title, button ----------
+// ---------- hero: state, title, button ----------
 
-const mascot = mountMascot($("home-mascot"), {
-  size: 96,
-  surface: matchMedia("(prefers-color-scheme: dark)").matches ? "deep" : "cream",
-});
+type HeroState = "idle" | "listening" | "thinking" | "done" | "blocked";
 
 function renderHero() {
   const ready = stt.state === "ready" || stt.state === "idle";
-  const [title, pose]: [string, MascotState] =
+  const [title, state]: [string, HeroState] =
     dictation === "recording" ? ["Listening…", "listening"]
     : dictation === "processing" ? ["Tidying up…", "thinking"]
     : dictation === "done" ? ["Sent.", "done"]
     : stt.state === "loading" ? ["Warming up…", "thinking"]
-    : stt.state === "missing" ? ["One more step.", "idle"]
-    : stt.state === "failed" ? ["Speech isn't working.", "idle"]
+    : stt.state === "missing" ? ["One more step.", "blocked"]
+    : stt.state === "failed" ? ["Speech isn't working.", "blocked"]
     : ["Ready when you are.", "idle"];
   $("home-title").textContent = title;
-  mascot.set(pose);
+  $("home-state").dataset.state = state;
 
   const btn = $<HTMLButtonElement>("toggle-btn");
   btn.textContent = dictation === "recording" ? "Stop and send" : "Start dictation";

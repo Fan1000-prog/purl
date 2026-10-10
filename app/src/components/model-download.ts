@@ -6,7 +6,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { DownloadErrorKind, ModelDone, ModelProgress, ModelView } from "../types";
+import type { DownloadFailure, ModelDone, ModelProgress, ModelView } from "../types";
 
 export interface ModelDownloadOptions {
   id: string;
@@ -23,11 +23,11 @@ export interface ModelDownload {
 }
 
 // Retrying a disk-full refusal can't help until space is freed, so Retry
-// waits for the window to regain focus. Builds that predate `kind` only send
-// the sentence, so fall back to download.rs's wording.
+// waits for the window to regain focus. Builds that predate `kind` send none
+// (undefined at runtime), so fall back to download.rs's wording there.
 const DISK_FULL_TEXT = /^Not enough free space/;
 
-function isDiskFull(kind: DownloadErrorKind | null | undefined, error: string | null): boolean {
+function isDiskFull(kind: DownloadFailure | null | undefined, error: string | null): boolean {
   return kind === undefined ? DISK_FULL_TEXT.test(error ?? "") : kind === "disk_full";
 }
 
@@ -67,7 +67,7 @@ export function mountModelDownload(el: HTMLElement, opts: ModelDownloadOptions):
   let model: ModelView | null = null;
   // The last failure's kind; models_status doesn't carry one, so a failure
   // known only from it is judged by its sentence.
-  let failureKind: DownloadErrorKind | null | undefined;
+  let failureKind: DownloadFailure | null | undefined;
   let announced: ModelView["state"] | null = null;
   let cancelling = false;
   let readyFired = false;

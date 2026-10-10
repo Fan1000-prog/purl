@@ -78,6 +78,7 @@ test("Home: last dictation toggles cleaned and raw, and updates on a new result"
   await page.getByRole("radio", { name: "Cleaned" }).click();
   await page.evaluate(() => window.__purlMock!.dictate("Testing Purl, one two three."));
   await expect(page.locator("#home-title")).toHaveText("Sent.");
+  await expect(page.locator("#home-state")).toHaveAttribute("data-state", "done");
   await expect(page.locator("#last-text")).toHaveText("Testing Purl, one two three.");
 });
 
@@ -89,6 +90,7 @@ test("Home banners: Accessibility denied, speech model missing, speech failed", 
   await open(page, "");
   await expect(page.locator("#home-banner")).toContainText("Download the speech model");
   await expect(page.locator("#home-title")).toHaveText("One more step.");
+  await expect(page.locator("#home-state")).toHaveAttribute("data-state", "blocked");
   await expect(page.locator("#toggle-btn")).toBeDisabled();
   await page.locator("#home-banner").getByRole("button", { name: "Download" }).click();
   await expect(page.locator("#home-banner")).toBeHidden();

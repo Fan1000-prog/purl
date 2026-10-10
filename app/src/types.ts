@@ -58,15 +58,14 @@ export interface ModelProgress {
   downloaded_bytes: number;
   size_bytes: number;
 }
-/** Why a download ended without the model; null when it succeeded. */
-export type DownloadErrorKind =
-  | "disk_full" | "offline" | "http" | "checksum" | "cancelled" | "io" | "unknown";
+/** Why a download ended without the model (matches DownloadError::kind). */
+export type DownloadFailure =
+  | "disk_full" | "offline" | "http" | "checksum" | "cancelled" | "io" | "stopped";
 export interface ModelDone {
   id: string;
   ok: boolean;
   error: string | null;
-  /** Optional until the engine emits it; older builds send only `error`. */
-  kind?: DownloadErrorKind | null;
+  kind: DownloadFailure | null; // null when ok
 }
 export type EngineState =
   | { state: "missing" } | { state: "loading" } | { state: "ready" }

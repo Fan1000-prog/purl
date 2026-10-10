@@ -83,6 +83,9 @@ function reportHitRect() {
   });
 }
 window.addEventListener("resize", reportHitRect);
+// The pill also changes size on its own: a label swap, or the UI font
+// finishing loading after the first report. Re-report on every change.
+new ResizeObserver(() => reportHitRect()).observe(pill);
 
 // ---------- mic level ring ----------
 

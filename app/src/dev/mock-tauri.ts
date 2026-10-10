@@ -22,7 +22,7 @@
 //   stt=loading|failed      speech engine state (default follows the model)
 // Tests also drive it through `window.__purlMock` (see MockControls).
 
-import type { DownloadErrorKind, EngineStatusView, ModelView, Trust } from "../types";
+import type { DownloadFailure, EngineStatusView, ModelView, Trust } from "../types";
 
 type Handler = (event: { event: string; id: number; payload: unknown }) => void;
 
@@ -49,7 +49,7 @@ const ERRORS = {
   cancelled: "Download cancelled.",
 } as const;
 
-const KINDS: Record<keyof typeof ERRORS, DownloadErrorKind> = {
+const KINDS: Record<keyof typeof ERRORS, DownloadFailure> = {
   offline: "offline",
   diskfull: "disk_full",
   http: "http",
@@ -122,7 +122,7 @@ function install() {
     m.state = error === null ? "ready" : error === ERRORS.cancelled ? "missing" : "failed";
     m.error = error === ERRORS.cancelled ? null : error;
     const which = (Object.keys(ERRORS) as (keyof typeof ERRORS)[]).find((k) => ERRORS[k] === error);
-    const kind = error === null ? null : which ? KINDS[which] : "unknown";
+    const kind = error === null ? null : which ? KINDS[which] : "stopped";
     emit("model-done", { id: m.id, ok: error === null, error, kind });
     if (error === null && m.kind === "stt") {
       setEngine({ state: "loading" });
