@@ -302,6 +302,15 @@ mod tests {
 
     const SR: usize = 16_000;
 
+    /// Guards the Windows build, which links Microsoft's onnxruntime.dll
+    /// dynamically: a stale copy found first (System32 ships an older one)
+    /// would show up here as a different version.
+    #[test]
+    fn links_the_pinned_onnx_runtime() {
+        let info = ort::info();
+        assert!(info.contains("rel-1.28."), "{info}");
+    }
+
     #[test]
     fn short_audio_is_one_segment() {
         let a = vec![0.0; SR * 5];
