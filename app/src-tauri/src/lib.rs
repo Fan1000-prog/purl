@@ -24,7 +24,8 @@ mod whisper_server;
 
 use serde::Serialize;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager};
@@ -46,8 +47,8 @@ struct AppState {
     settings: Mutex<Settings>,
     /// Cached copy of transforms.json; hotkey routing reads it on every press.
     transforms: Mutex<Vec<transforms::Transform>>,
-    /// Guards against overlapping pipeline runs.
-    processing: Mutex<bool>,
+    /// Guards against overlapping pipeline runs; see `try_begin_session`.
+    processing: Arc<AtomicBool>,
     last_result: Mutex<Option<TranscriptPayload>>,
     hotkey_press: Mutex<HotkeyPress>,
     /// Set when recording starts; drained by stop to compute record_ms.
@@ -117,19 +118,22 @@ fn status_payload_for(trust: platform::Trust, hotkey: &str, state: &str) -> Stat
     }
 }
 
-/// Claim the one-session-at-a-time guard. False when a dictation or
-/// transform is already processing; the caller must then do nothing.
-fn try_begin_session(busy: &Mutex<bool>) -> bool {
-    let mut busy = busy.lock().unwrap();
-    if *busy {
-        return false;
+/// Holds the one-session-at-a-time flag; dropping it frees the flag, so a
+/// panicking pipeline thread can't leave Purl stuck "processing".
+struct SessionGuard(Arc<AtomicBool>);
+
+impl Drop for SessionGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
     }
-    *busy = true;
-    true
 }
 
-fn end_session(busy: &Mutex<bool>) {
-    *busy.lock().unwrap() = false;
+/// Claim the one-session-at-a-time guard. None when a dictation or
+/// transform is already processing; the caller must then do nothing.
+fn try_begin_session(busy: &Arc<AtomicBool>) -> Option<SessionGuard> {
+    busy.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .ok()
+        .map(|_| SessionGuard(busy.clone()))
 }
 
 fn app_support_dir(app: &AppHandle) -> PathBuf {
@@ -668,7 +672,7 @@ fn start_dictation(app: &AppHandle) {
     let state = app.state::<AppState>();
 
     // Ignore starts while a previous run is still transcribing.
-    if *state.processing.lock().unwrap() {
+    if state.processing.load(Ordering::SeqCst) {
         notify(app, "Still processing the previous dictation — one moment.");
         return;
     }
@@ -704,14 +708,18 @@ fn stop_and_transcribe(app: &AppHandle) {
         Some(r) => r,
         None => return,
     };
-    if !try_begin_session(&state.processing) {
+    let Some(session) = try_begin_session(&state.processing) else {
         // A transform got in first. Starting a second pipeline would race
         // it for the clipboard; drop this recording instead.
         recorder.cancel();
         log_line(app, "dictation discarded — another session is processing");
         set_state(app, "processing");
+        notify(
+            app,
+            "Purl was busy with a transform, so that dictation was discarded. Try again in a moment.",
+        );
         return;
-    }
+    };
     // Hides the overlay too — if the user clicked the pill's ✓, focus must
     // return to their target app before the paste keystroke fires.
     set_state(app, "processing");
@@ -727,7 +735,7 @@ fn stop_and_transcribe(app: &AppHandle) {
     let app = app.clone();
     std::thread::spawn(move || {
         let result = run_pipeline(&app, recorder, record_ms);
-        end_session(&app.state::<AppState>().processing);
+        drop(session);
         set_state(&app, "idle");
         if let Err(e) = result {
             log_line(&app, &format!("pipeline ERROR: {e}"));
@@ -766,15 +774,20 @@ fn toggle_dictation(app: &AppHandle) {
 /// `processing` guard with dictation so the two can never overlap.
 fn run_transform(app: &AppHandle, t: transforms::Transform) {
     let state = app.state::<AppState>();
-    if state.recorder.lock().unwrap().is_some() || !try_begin_session(&state.processing) {
+    let session = if state.recorder.lock().unwrap().is_some() {
+        None
+    } else {
+        try_begin_session(&state.processing)
+    };
+    let Some(session) = session else {
         notify(
             app,
             "Busy with another dictation or transform — one moment.",
         );
         return;
-    }
+    };
     if !platform::injector().can_inject().can_paste() {
-        end_session(&state.processing);
+        drop(session);
         notify(
             app,
             "Transforms need the Accessibility permission to read your selection (see the app window).",
@@ -786,7 +799,7 @@ fn run_transform(app: &AppHandle, t: transforms::Transform) {
     let app = app.clone();
     std::thread::spawn(move || {
         let result = run_transform_pipeline(&app, &t);
-        end_session(&app.state::<AppState>().processing);
+        drop(session);
         set_state(&app, "idle");
         match result {
             Ok(()) => {
@@ -965,6 +978,9 @@ fn run_pipeline(app: &AppHandle, recorder: Recorder, record_ms: u64) -> Result<(
     );
 
     let has_key_commands = voice_commands::has_keys(&segments);
+    // Set when a synthesized paste or key fails mid-way and the text went to
+    // the clipboard instead.
+    let mut paste_failed = false;
     match settings.inject_mode {
         InjectMode::Paste => {
             if own_window_focused {
@@ -983,24 +999,37 @@ fn run_pipeline(app: &AppHandle, recorder: Recorder, record_ms: u64) -> Result<(
                     if i > 0 {
                         std::thread::sleep(std::time::Duration::from_millis(120));
                     }
-                    match seg {
+                    let sent = match seg {
                         voice_commands::Segment::Text(t) => {
                             log_line(app, "inject: pasting via Cmd-V");
-                            inject::inject(t).map_err(|e| {
-                                log_line(app, &format!("inject: paste FAILED: {e}"));
-                                format!("Paste failed: {e}")
-                            })?;
+                            inject::inject(t)
                         }
                         voice_commands::Segment::Key(k) => {
                             log_line(app, &format!("inject: voice command key {k:?}"));
-                            platform::injector().send_key(*k).map_err(|e| {
-                                log_line(app, &format!("inject: key FAILED: {e}"));
-                                format!("Keystroke failed: {e}")
-                            })?;
+                            platform::injector().send_key(*k)
                         }
+                    };
+                    if let Err(e) = sent {
+                        // Typically Windows UIPI: the target runs as
+                        // administrator. Hand the user the whole dictation
+                        // to paste themselves rather than half of it.
+                        log_line(app, &format!("inject: FAILED: {e} -> clipboard fallback"));
+                        inject::copy_to_clipboard(&expanded)
+                            .map_err(|e| format!("Clipboard failed: {e}"))?;
+                        notify(
+                            app,
+                            &format!(
+                                "Copied to clipboard — paste with {}.",
+                                platform::PASTE_SHORTCUT
+                            ),
+                        );
+                        paste_failed = true;
+                        break;
                     }
                 }
-                log_line(app, "inject: all segments sent OK");
+                if !paste_failed {
+                    log_line(app, "inject: all segments sent OK");
+                }
             } else {
                 log_line(
                     app,
@@ -1068,6 +1097,7 @@ fn run_pipeline(app: &AppHandle, recorder: Recorder, record_ms: u64) -> Result<(
         && matches!(settings.inject_mode, InjectMode::Paste)
         && !own_window_focused
         && paste_trust.can_paste()
+        && !paste_failed
     {
         spawn_correction_watch(app.clone(), expanded.clone());
     }
@@ -1315,7 +1345,7 @@ fn get_status(app: AppHandle, state: tauri::State<AppState>) -> StatusPayload {
     let resource_dir = app.path().resource_dir().ok();
     let app_state = if state.recorder.lock().unwrap().is_some() {
         "recording"
-    } else if *state.processing.lock().unwrap() {
+    } else if state.processing.load(Ordering::SeqCst) {
         "processing"
     } else {
         "idle"
@@ -2114,11 +2144,27 @@ mod platform_wiring_tests {
     /// is refused, and the guard frees up again once the session ends.
     #[test]
     fn second_session_rejected_while_processing() {
-        let busy = std::sync::Mutex::new(false);
-        assert!(try_begin_session(&busy));
-        assert!(!try_begin_session(&busy));
-        end_session(&busy);
-        assert!(try_begin_session(&busy));
+        let busy = Arc::new(AtomicBool::new(false));
+        let first = try_begin_session(&busy);
+        assert!(first.is_some());
+        assert!(try_begin_session(&busy).is_none());
+        drop(first);
+        assert!(try_begin_session(&busy).is_some());
+    }
+
+    /// A pipeline thread that panics mid-session must not leave Purl
+    /// refusing every later dictation.
+    #[test]
+    fn panicking_session_releases_the_guard() {
+        let busy = Arc::new(AtomicBool::new(false));
+        let held = try_begin_session(&busy).unwrap();
+        let joined = std::thread::spawn(move || {
+            let _held = held;
+            panic!("pipeline blew up");
+        })
+        .join();
+        assert!(joined.is_err());
+        assert!(try_begin_session(&busy).is_some());
     }
 
     /// Review focus #1: a lost Accessibility grant reaches the UI as Denied,

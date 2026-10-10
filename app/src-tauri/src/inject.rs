@@ -2,6 +2,7 @@
 //! chord, then restore the previous clipboard. The keystrokes themselves are
 //! `platform::TextInjector`'s job; this module owns the clipboard choreography.
 
+use crate::platform::TextInjector;
 use std::thread::sleep;
 use std::time::Duration;
 
@@ -26,25 +27,50 @@ pub fn copy_to_clipboard(text: &str) -> Result<(), InjectError> {
         .map_err(|e| InjectError::Clipboard(e.to_string()))
 }
 
-/// Inject `text` at the cursor of the frontmost app via clipboard + Cmd-V,
-/// restoring whatever text was on the clipboard before.
+/// The clipboard calls `inject` makes; a seam so tests needn't touch the
+/// real clipboard.
+trait Clipboard {
+    fn get_text(&mut self) -> Option<String>;
+    fn set_text(&mut self, text: &str) -> Result<(), InjectError>;
+}
+
+impl Clipboard for arboard::Clipboard {
+    fn get_text(&mut self) -> Option<String> {
+        arboard::Clipboard::get_text(self).ok()
+    }
+    fn set_text(&mut self, text: &str) -> Result<(), InjectError> {
+        arboard::Clipboard::set_text(self, text.to_string())
+            .map_err(|e| InjectError::Clipboard(e.to_string()))
+    }
+}
+
+/// Inject `text` at the cursor of the frontmost app via clipboard + the OS
+/// paste chord, restoring whatever text was on the clipboard before. If the
+/// paste keystroke fails, `text` is left on the clipboard so the user can
+/// paste it by hand.
 pub fn inject(text: &str) -> Result<(), InjectError> {
     let mut cb = arboard::Clipboard::new().map_err(|e| InjectError::Clipboard(e.to_string()))?;
-    let previous = cb.get_text().ok();
+    inject_with(&mut cb, crate::platform::injector(), text)
+}
 
-    cb.set_text(text.to_string())
-        .map_err(|e| InjectError::Clipboard(e.to_string()))?;
+fn inject_with(
+    cb: &mut dyn Clipboard,
+    injector: &dyn TextInjector,
+    text: &str,
+) -> Result<(), InjectError> {
+    let previous = cb.get_text();
+    cb.set_text(text)?;
     // Give the pasteboard a beat to settle before the paste keystroke.
     sleep(Duration::from_millis(80));
 
-    let result = crate::platform::injector().paste();
+    injector.paste()?;
 
     // Let the target app read the clipboard before restoring it.
     sleep(Duration::from_millis(250));
     if let Some(prev) = previous {
-        let _ = cb.set_text(prev);
+        let _ = cb.set_text(&prev);
     }
-    result
+    Ok(())
 }
 
 /// Sentinel written to the clipboard before the synthesized Cmd-C; if it is
@@ -104,5 +130,62 @@ pub fn restore_clipboard(previous: &Option<String>) {
                 let _ = cb.clear();
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::platform::Trust;
+    use crate::voice_commands::Key;
+
+    struct FakeClipboard(Option<String>);
+
+    impl Clipboard for FakeClipboard {
+        fn get_text(&mut self) -> Option<String> {
+            self.0.clone()
+        }
+        fn set_text(&mut self, text: &str) -> Result<(), InjectError> {
+            self.0 = Some(text.to_string());
+            Ok(())
+        }
+    }
+
+    struct FakeInjector {
+        paste_ok: bool,
+    }
+
+    impl TextInjector for FakeInjector {
+        fn paste(&self) -> Result<(), InjectError> {
+            if self.paste_ok {
+                Ok(())
+            } else {
+                Err(InjectError::Synthesis("blocked".into()))
+            }
+        }
+        fn copy(&self) -> Result<(), InjectError> {
+            Ok(())
+        }
+        fn send_key(&self, _key: Key) -> Result<(), InjectError> {
+            Ok(())
+        }
+        fn can_inject(&self) -> Trust {
+            Trust::NotRequired
+        }
+    }
+
+    #[test]
+    fn successful_paste_restores_the_old_clipboard() {
+        let mut cb = FakeClipboard(Some("old".into()));
+        inject_with(&mut cb, &FakeInjector { paste_ok: true }, "new").unwrap();
+        assert_eq!(cb.0.as_deref(), Some("old"));
+    }
+
+    #[test]
+    fn failed_paste_leaves_the_text_on_the_clipboard() {
+        let mut cb = FakeClipboard(Some("old".into()));
+        let r = inject_with(&mut cb, &FakeInjector { paste_ok: false }, "new");
+        assert!(matches!(r, Err(InjectError::Synthesis(_))));
+        assert_eq!(cb.0.as_deref(), Some("new"));
     }
 }

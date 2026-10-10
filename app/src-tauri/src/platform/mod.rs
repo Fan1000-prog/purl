@@ -92,6 +92,13 @@ fn windows_mic_trust(consent: Option<&str>) -> Trust {
     }
 }
 
+/// The paste shortcut, as the user would type it.
+pub const PASTE_SHORTCUT: &str = if cfg!(target_os = "macos") {
+    "⌘V"
+} else {
+    "Ctrl+V"
+};
+
 /// Correction learning needs a FocusReader that can actually read. Windows
 /// (UI Automation) is not built in v1.
 pub const LEARNING_SUPPORTED: bool = cfg!(target_os = "macos");
