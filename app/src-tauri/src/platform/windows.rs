@@ -40,24 +40,40 @@ fn key_event(vk: VIRTUAL_KEY, up: bool) -> INPUT {
     }
 }
 
-fn send(seq: &[INPUT]) -> Result<(), InjectError> {
-    let sent = unsafe { SendInput(seq, std::mem::size_of::<INPUT>() as i32) };
+/// Key-up events for `keys`, in order.
+fn release_sequence(keys: &[VIRTUAL_KEY]) -> Vec<INPUT> {
+    keys.iter().map(|&k| key_event(k, true)).collect()
+}
+
+/// Send `seq`, whose keys `held` must not be left down. A short count means
+/// some events were inserted and some weren't, so a key-down may have gone
+/// through without its key-up; a stuck Ctrl would turn the user's next
+/// keystrokes into shortcuts. Release `held` best-effort and report failure.
+///
+/// A full count doesn't prove delivery: UIPI can drop input aimed at an
+/// elevated window while SendInput still reports every event inserted.
+fn send(seq: &[INPUT], held: &[VIRTUAL_KEY]) -> Result<(), InjectError> {
+    let size = std::mem::size_of::<INPUT>() as i32;
+    let sent = unsafe { SendInput(seq, size) };
     if sent as usize == seq.len() {
-        Ok(())
-    } else {
-        Err(InjectError::Synthesis(
-            "SendInput was blocked (the target may be running as administrator)".into(),
-        ))
+        return Ok(());
     }
+    let _ = unsafe { SendInput(&release_sequence(held), size) };
+    Err(InjectError::Synthesis(
+        "SendInput was blocked (the target may be running as administrator)".into(),
+    ))
 }
 
 fn chord(modifier: VIRTUAL_KEY, key: VIRTUAL_KEY) -> Result<(), InjectError> {
-    send(&[
-        key_event(modifier, false),
-        key_event(key, false),
-        key_event(key, true),
-        key_event(modifier, true),
-    ])
+    send(
+        &[
+            key_event(modifier, false),
+            key_event(key, false),
+            key_event(key, true),
+            key_event(modifier, true),
+        ],
+        &[key, modifier],
+    )
 }
 
 pub struct WindowsInjector;
@@ -71,7 +87,7 @@ impl TextInjector for WindowsInjector {
     }
     fn send_key(&self, key: Key) -> Result<(), InjectError> {
         let k = vk(key);
-        send(&[key_event(k, false), key_event(k, true)])
+        send(&[key_event(k, false), key_event(k, true)], &[k])
     }
     fn can_inject(&self) -> Trust {
         Trust::NotRequired
@@ -101,4 +117,30 @@ pub fn mic_consent_value() -> Option<String> {
     // `len` is in bytes and includes the terminating NUL.
     let chars = (len as usize / 2).saturating_sub(1);
     Some(String::from_utf16_lossy(&buf[..chars]))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn release_sequence_lifts_the_key_then_the_modifier() {
+        let v = VIRTUAL_KEY(b'V' as u16);
+        let seq = release_sequence(&[v, VK_CONTROL]);
+        let events: Vec<_> = seq
+            .iter()
+            .map(|i| {
+                (i.r#type, unsafe { i.Anonymous.ki.wVk }, unsafe {
+                    i.Anonymous.ki.dwFlags
+                })
+            })
+            .collect();
+        assert_eq!(
+            events,
+            vec![
+                (INPUT_KEYBOARD, v, KEYEVENTF_KEYUP),
+                (INPUT_KEYBOARD, VK_CONTROL, KEYEVENTF_KEYUP),
+            ]
+        );
+    }
 }
