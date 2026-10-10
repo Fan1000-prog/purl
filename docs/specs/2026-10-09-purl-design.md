@@ -3,7 +3,7 @@
 **Date:** 2026-10-09
 **Status:** design approved in chat 2026-10-09; this file awaits review
 **Origin:** VendastaTalk v0.8.0 (`Citizen_Developer_Projects/Users/fani-bango/Vendasta-Talk`), Tauri v2, ~6k lines Rust + ~2.5k lines TS
-**Brand:** `~/Desktop/Purl-Design` (logo pack, palette, mascot states)
+**Brand:** Brand v2, made fresh (amended 2026-10-10; the Purl-Design kit is dropped). References: wisprflow.ai, Heidi Dictate
 
 ## Goal
 
@@ -14,7 +14,7 @@ the machine.
 
 ## Success criteria
 
-1. A new user on macOS (Apple Silicon or Intel) or Windows 10/11 x64 installs Purl
+1. A new user on macOS (Apple Silicon) or Windows 10/11 x64 installs Purl
    from the README in under 5 minutes, with no Homebrew, no Ollama, no terminal on
    Windows.
 2. Hotkey → speak → cleaned text pasted into Chrome (Gmail, Google Chat), Notepad /
@@ -31,6 +31,9 @@ the machine.
 - Correction learning on Windows (UI Automation reader). Ships disabled on Windows
   with a clear note; macOS keeps it.
 - Linux, Windows on ARM, mobile.
+- **Intel Macs** (amended 2026-10-10). ONNX Runtime ≥1.27, which `ort`/`transcribe-rs` need, has no official
+  x86_64-apple-darwin build (Microsoft's last Intel Mac release is 1.23; pyke ships none). Building it ourselves is
+  deferred until users ask. README and landing page say Intel Macs aren't supported yet.
 - Authenticode signing and Apple notarization. macOS builds use a stable self-signed identity so the Accessibility grant survives updates. v1 Windows installer is unsigned; the guide covers the
   SmartScreen "More info → Run anyway" step. Signing is the first v1.x item.
 - Streaming / live preview transcription.
@@ -40,7 +43,7 @@ the machine.
 | # | Deliverable | Where |
 |---|---|---|
 | 1 | App source, MIT, fresh git history | public `github.com/Fan1000-prog/purl`, local `~/Desktop/purl` |
-| 2 | Releases: macOS `.dmg` per arch (Apple Silicon, Intel — amended: `llama-server` ships per-arch), Windows NSIS `.exe` (x64), `latest.json` for the updater | GitHub Releases on `purl` |
+| 2 | Releases: macOS `.dmg` for Apple Silicon only (amended 2026-10-10: no Intel build in v1, see Non-goals), Windows NSIS `.exe` (x64), `latest.json` for the updater | GitHub Releases on `purl` |
 | 3 | README: pitch, install (both OSes), guide, benchmark, case study, privacy, credits/licences | `purl/README.md` + `purl/docs/` |
 | 4 | Landing page | private `github.com/Fan1000-prog/purl-site`, local `~/Desktop/purl-site`, hosted on Vercel (deploy needs a go-ahead) |
 
@@ -67,7 +70,7 @@ purl/
         mod.rs  mac.rs  windows.rs
       cleanup.rs fastclean.rs transforms.rs voice_commands.rs snippets.rs
       corrections.rs learned.rs ax_read.rs (mac only) history.rs stats.rs
-      dictionary.rs          # was glossary.rs, now user-owned, ships empty
+      dictionary.rs          # was glossary.rs, user-owned; ships with one entry, "Purl"
       audio.rs settings.rs lib.rs
 ```
 
@@ -127,6 +130,9 @@ Two tiers, user-selectable in Settings:
 
 1. **Fast** (default, no download): existing `fastclean.rs` + `cleanup.rs` rules —
    filler removal, punctuation, capitalisation, personal dictionary, snippets.
+   The dictionary ships with one entry, `Purl` (amended 2026-10-10): Parakeet hears it as
+   "Pearl". The entry fixes casing and biases Smart cleanup; Fast cleanup does not rewrite
+   "pearl" → "Purl", because that would corrupt the real word.
 2. **Smart** (opt-in): bundled **llama.cpp `llama-server`** (MIT) +
    **Qwen3.5-2B Q4_K_M GGUF** (~1.3 GB, Apache-2.0), downloaded when the
    user turns it on. A larger 4B option is offered, not default. The
@@ -175,21 +181,26 @@ a permission prompt that leads nowhere.
 
 ## Redesign
 
-- Palette tokens from the logo pack: Cream `#F7F1E8`, Paper `#FCF8F1`, Ink
-  `#1F1A17`, Deep `#2A231E`, Fern `#3F6B4B`, Sprout `#B7CDA3`, Butter `#F3D36B`,
-  Terracotta `#C0683F`, Peach `#F1D3BF`. Light (cream) and dark (deep) themes,
-  following the OS.
-- Type: Instrument Serif for display, Figtree for UI. Both OFL, bundled locally
-  (no Google Fonts call from the app).
-- Mascot drives state: overlay and Home show `idle` / `listening` / `thinking` /
-  `done` animated SVGs from `02-character/svg/`. Below 40 px and under
-  `prefers-reduced-motion`, the static pose.
-- App icon / tray / favicon from `01-logo-locked` (bead-only at ≤32 px).
-- Onboarding rebuilt as 4 steps: welcome → mic (+ Accessibility on macOS) →
-  speech model download with progress → try it (dictate into a test box).
-  Smart cleanup offered afterwards, not in the critical path.
-- Screens: Home (recent + stats), Dictionary, Snippets, Transforms, Settings.
-  Every screen has a designed empty state and error state.
+*Amended 2026-10-10: the `~/Desktop/Purl-Design` kit (logo, mascot, palette) is dropped as too playful.
+The name stays Purl.*
+
+- **References:** wisprflow.ai and Heidi Health's Dictate page. Take their composition, rhythm and
+  restraint, not their text, logos, illustrations or distinctive assets. Both are real companies, and
+  Wispr Flow is a direct competitor, so Purl must not be mistaken for either.
+- **Direction:** calm, grown-up, editorial. A warm off-white or near-black canvas, one restrained accent,
+  a refined serif for display paired with a clean sans for UI, generous whitespace, and real product UI
+  (the overlay pill, the app window) as the hero visual instead of a character.
+- **Identity, made fresh in "Brand v2":** a wordmark and a simple geometric app icon/mark that reads at
+  16 px; colour and type tokens; light and dark themes following the OS. All fonts OFL, bundled locally
+  (the app makes no Google Fonts call).
+- **No mascot.** State is shown by the overlay pill itself: a live level meter while listening, a subtle
+  progress shimmer while cleaning up, a check when sent, an error line when something fails. Static under
+  `prefers-reduced-motion`.
+- One token set drives both the app and the landing page.
+- Onboarding: 4 steps — welcome → mic (+ Accessibility on macOS) → speech model download with progress →
+  try it. Smart cleanup offered afterwards, not in the critical path.
+- Screens: Home (recent + stats), Dictionary, Snippets, Transforms, Settings. Every screen has a designed
+  empty state and error state.
 
 ## Error handling and edge cases (QA matrix)
 
@@ -244,7 +255,7 @@ a permission prompt that leads nowhere.
   measured results), Credits & licences (Parakeet CC-BY-4.0, transcribe-rs, ONNX Runtime, llama.cpp,
   Qwen, fonts), Contributing, MIT.
 - **Landing page:** static site (Vite + plain TS, no framework needed), in the
-  spirit of Heidi Dictate: big serif hero, the mascot listening, a live
+  spirit of Wispr Flow and Heidi Dictate: big serif hero, the real overlay pill listening, a live
   "messy speech → clean text" demo, three feature bands (private, fast, works
   everywhere), benchmark strip, download buttons that detect OS, FAQ, footer.
   Lighthouse ≥ 95 performance/accessibility, works at 360 px wide.
@@ -265,9 +276,9 @@ reviewed by a fresh reviewer agent before merge:
 
 ## Risks
 
-- **Parakeet on Intel Macs / older Windows CPUs:** may run slower than real time.
-  Benchmark both; if RTF > 0.5 on Intel, document it and keep the model choice
-  open (registry supports alternatives).
+- **Parakeet on older Windows CPUs:** may run slower than real time. Windows uses Microsoft's
+  official CPU-only ONNX Runtime (no DirectML, no AVX2-only build) shipped as `onnxruntime.dll`
+  beside `purl.exe`.
 - **No Windows hardware in the loop:** CI smoke proves install + launch + engine
   health, not real paste into Chrome. Stated plainly in release notes.
 - **Unsigned Windows installer:** SmartScreen warning; corp-managed machines may
