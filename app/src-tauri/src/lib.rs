@@ -3,6 +3,7 @@ mod ax_read;
 mod cleanup;
 mod corrections;
 mod dictionary;
+pub mod engine;
 mod fastclean;
 mod history;
 mod inject;
@@ -61,6 +62,8 @@ struct AppState {
     /// otherwise an older watcher that outlives a newer one could flip the
     /// indicator back and forth behind the newer one's back.
     correction_watch_gen: std::sync::atomic::AtomicU64,
+    /// Model downloads in flight, with their cancel flags and last errors.
+    downloads: engine::Downloads,
 }
 
 #[derive(Default)]
@@ -332,7 +335,7 @@ const WATCH_SETTLED_POLLS: usize = 20; // 12 seconds
 /// indicator, the store, the log, and whether this watcher is still the
 /// current one. Split out so `run_correction_watch` — where the exit paths
 /// and the supersession rule live — can be tested without an `AppHandle`
-/// and without waiting 30 real seconds.
+/// and without waiting 90 real seconds.
 trait WatchHost {
     fn wait(&self, d: std::time::Duration);
     /// Light or clear the disclosure dot.
@@ -1382,6 +1385,101 @@ fn clear_learned_rules(app: AppHandle) -> Result<(), String> {
     learned::clear(&learned_path(&app)).map_err(|e| e.to_string())
 }
 
+// ---- Models: registry status and downloads ----
+
+#[derive(Clone, Serialize)]
+struct ModelProgressEvent {
+    id: &'static str,
+    downloaded_bytes: u64,
+    size_bytes: u64,
+}
+
+#[derive(Clone, Serialize)]
+struct ModelDoneEvent {
+    id: &'static str,
+    ok: bool,
+    error: Option<String>,
+    /// `DownloadError::kind`; None when ok.
+    kind: Option<&'static str>,
+}
+
+fn model_done(
+    id: &'static str,
+    result: &Result<(), engine::download::DownloadError>,
+) -> ModelDoneEvent {
+    let failure = result.as_ref().err();
+    ModelDoneEvent {
+        id,
+        ok: failure.is_none(),
+        error: failure.map(|e| e.to_string()),
+        kind: failure.map(|e| e.kind()),
+    }
+}
+
+#[tauri::command]
+fn models_status(app: AppHandle, state: tauri::State<AppState>) -> Vec<engine::ModelView> {
+    state.downloads.views(&app_support_dir(&app))
+}
+
+/// Starts the download on its own thread and returns at once; progress and
+/// the outcome arrive as `model-progress` / `model-done` events. A second
+/// call while that model is already downloading is a no-op.
+#[tauri::command]
+fn download_model(app: AppHandle, state: tauri::State<AppState>, id: String) -> Result<(), String> {
+    let spec = engine::models::find(&id).ok_or_else(|| format!("Unknown model {id}"))?;
+    let Some(cancel) = state.downloads.try_start(spec.id) else {
+        return Ok(());
+    };
+    let app_data = app_support_dir(&app);
+    std::thread::spawn(move || {
+        let result = engine::download::download_model(spec, &app_data, &cancel, &mut |p| {
+            let _ = app.emit(
+                "model-progress",
+                ModelProgressEvent {
+                    id: spec.id,
+                    downloaded_bytes: p.downloaded,
+                    size_bytes: p.total,
+                },
+            );
+        });
+        let done = model_done(spec.id, &result);
+        log_line(
+            &app,
+            &format!(
+                "model {}: download {}",
+                spec.id,
+                done.error.as_deref().unwrap_or("ok")
+            ),
+        );
+        app.state::<AppState>().downloads.finish(spec.id, &result);
+        let _ = app.emit("model-done", done);
+    });
+    Ok(())
+}
+
+#[tauri::command]
+fn cancel_download(state: tauri::State<AppState>, id: String) {
+    state.downloads.cancel(&id);
+}
+
+/// Removes a model's folder, `.part` files included. Engines register the
+/// models they have loaded in Tasks 5/6; until then only an in-flight
+/// download blocks deletion.
+#[tauri::command]
+fn delete_model(app: AppHandle, state: tauri::State<AppState>, id: String) -> Result<(), String> {
+    let spec = engine::models::find(&id).ok_or_else(|| format!("Unknown model {id}"))?;
+    if state.downloads.is_running(spec.id) {
+        return Err("Cancel the download first".into());
+    }
+    let dir = engine::models::model_dir(&app_support_dir(&app), spec.id);
+    match std::fs::remove_dir_all(&dir) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.to_string()),
+        _ => {}
+    }
+    state.downloads.clear_error(spec.id);
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1418,7 +1516,11 @@ pub fn run() {
             clear_learned_rules,
             get_transforms,
             save_transforms,
-            reset_transforms
+            reset_transforms,
+            models_status,
+            download_model,
+            cancel_download,
+            delete_model
         ])
         .setup(|app| {
             // Load persisted settings before anything uses them.
@@ -1451,7 +1553,8 @@ pub fn run() {
             let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&toggle_item, &show_item, &quit_item])?;
             TrayIconBuilder::with_id("main")
-                .icon(app.default_window_icon().unwrap().clone())
+                // Bead-only mark: the full icon's sound arc blurs at menu-bar size.
+                .icon(tauri::include_image!("icons/tray.png"))
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "toggle" => toggle_dictation(app),
@@ -1535,6 +1638,33 @@ pub fn run() {
                 app.state::<AppState>().whisper_server.lock().unwrap().take();
             }
         });
+}
+
+#[cfg(test)]
+mod model_done_tests {
+    use super::model_done;
+    use crate::engine::download::DownloadError;
+
+    #[test]
+    fn success_has_no_error_or_kind() {
+        let json = serde_json::to_value(model_done("parakeet-v3", &Ok(()))).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({"id": "parakeet-v3", "ok": true, "error": null, "kind": null})
+        );
+    }
+
+    #[test]
+    fn failure_carries_message_and_kind() {
+        let json =
+            serde_json::to_value(model_done("qwen3.5-2b", &Err(DownloadError::Offline))).unwrap();
+        assert_eq!(json["ok"], false);
+        assert_eq!(json["kind"], "offline");
+        assert_eq!(
+            json["error"],
+            "You're offline. Connect to the internet and press Retry."
+        );
+    }
 }
 
 #[cfg(test)]
@@ -1899,7 +2029,7 @@ mod correction_watch_tests {
     }
 
     /// The bug this trait exists to pin. A superseded watcher must stop
-    /// polling — it was reading whatever now has focus, for up to 30s after
+    /// polling — it was reading whatever now has focus, for up to 90s after
     /// the dot went dark — and must not clear an indicator the newer watcher
     /// now owns.
     #[test]
