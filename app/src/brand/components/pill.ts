@@ -1,7 +1,7 @@
 // Dictation pill: live, state-driven version of the motion pack's
 // 02-dictation-pill. Import pill.css alongside.
 //
-//   const pill = mountPill(el, { hotkey: "Ctrl+Space" });
+//   const pill = mountPill(el, { hotkey: "Ctrl+Shift+Space" });
 //   pill.set("listening"); pill.level(0.6); pill.set("polishing");
 //   pill.set("sent"); pill.error("Microphone not found"); pill.warn("Mic is very quiet");
 
@@ -12,7 +12,7 @@ export type PillFlowState = "idle" | "listening" | "polishing" | "sent";
 export type PillState = PillFlowState | "error" | "warning";
 
 export interface PillOptions {
-  /** The user's real hotkey, e.g. "fn", "Ctrl+Space", "⌥ Space". Parts split on "+". */
+  /** The user's real hotkey, e.g. "⌘+⇧+Space" or "Ctrl+Shift+Space". Parts split on "+". */
   hotkey: string;
   /** Word before the keycaps in the idle state. Default "Hold". */
   idleLabel?: string;
@@ -56,7 +56,7 @@ export function formatElapsed(seconds: number): string {
 
 function hotkeyParts(hotkey: string): string[] {
   const parts = hotkey.split("+").map((p) => p.trim()).filter(Boolean);
-  if (!parts.length) throw new TypeError("mountPill: `hotkey` must be a non-empty string such as \"Ctrl+Space\"");
+  if (!parts.length) throw new TypeError("mountPill: `hotkey` must be a non-empty string such as \"Ctrl+Shift+Space\"");
   return parts;
 }
 

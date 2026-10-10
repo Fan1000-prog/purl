@@ -1,7 +1,7 @@
 # Vendored brand
 
 Copied from the private `Fan1000-prog/purl-site` repo, `brand/` folder,
-branch `feat/motion-design`, commit `9d4b287`. Do not edit these files here:
+branch `feat/motion-design`, commit `4eafad3`. Do not edit these files here:
 change them in purl-site and copy them in again, so the app and the landing
 page keep one token set.
 
