@@ -612,7 +612,7 @@ fn start_dictation(app: &AppHandle) {
             // Reloads the speech model if it was dropped for idleness;
             // it loads while they talk.
             let warm_app = app.clone();
-            std::thread::spawn(move || stt(&warm_app).warm());
+            std::thread::spawn(move || warm_speech(&warm_app.state::<AppState>()));
         }
         Err(e) => {
             set_state(app, "idle");
@@ -790,7 +790,13 @@ fn run_pipeline(app: &AppHandle, recorder: Recorder, record_ms: u64) -> Result<(
     }
 
     let t0 = std::time::Instant::now();
-    let raw = stt(app).transcribe(&pcm).map_err(|e| e.to_string())?;
+    let stt = app
+        .state::<AppState>()
+        .stt
+        .get()
+        .cloned()
+        .ok_or("The speech engine is still starting. Try again in a moment.")?;
+    let raw = stt.transcribe(&pcm).map_err(|e| e.to_string())?;
     let transcribe_ms = t0.elapsed().as_millis();
 
     if raw.trim().is_empty() {
@@ -1388,7 +1394,7 @@ fn download_model(app: AppHandle, state: tauri::State<AppState>, id: String) -> 
         );
         app.state::<AppState>().downloads.finish(spec.id, &result);
         if result.is_ok() && spec.id == engine::stt::MODEL_ID {
-            stt(&app).warm();
+            warm_speech(&app.state::<AppState>());
         }
         let _ = app.emit("model-done", done);
     });
@@ -1408,8 +1414,8 @@ fn delete_model(app: AppHandle, state: tauri::State<AppState>, id: String) -> Re
     if state.downloads.is_running(spec.id) {
         return Err("Cancel the download first".into());
     }
-    if spec.id == engine::stt::MODEL_ID && !stt(&app).release() {
-        return Err("Stop using this model first".into());
+    if spec.id == engine::stt::MODEL_ID {
+        release_speech_model(&state)?;
     }
     let dir = engine::models::model_dir(&app_support_dir(&app), spec.id);
     match std::fs::remove_dir_all(&dir) {
@@ -1442,13 +1448,21 @@ fn stt_status(app: &AppHandle) -> engine::EngineState {
         .map_or(engine::EngineState::Loading, |e| e.status())
 }
 
-fn stt(app: &AppHandle) -> Arc<ParakeetEngine> {
-    Arc::clone(
-        app.state::<AppState>()
-            .stt
-            .get()
-            .expect("speech engine is set in setup"),
-    )
+/// Load the speech model in the background. A no-op before `setup` has
+/// built the engine.
+fn warm_speech(state: &AppState) {
+    if let Some(engine) = state.stt.get() {
+        engine.warm();
+    }
+}
+
+/// Let go of the speech model so its files can be deleted. Before `setup`
+/// has built the engine nothing is loaded, so there is nothing to release.
+fn release_speech_model(state: &AppState) -> Result<(), String> {
+    match state.stt.get() {
+        Some(engine) if !engine.release() => Err("Stop using this model first".into()),
+        _ => Ok(()),
+    }
 }
 
 /// Build the speech engine, broadcast its status changes, start loading
@@ -1619,6 +1633,19 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod speech_engine_access_tests {
+    use super::{release_speech_model, warm_speech, AppState};
+
+    /// A webview can call download/delete before `setup` builds the engine.
+    #[test]
+    fn commands_before_setup_do_not_panic() {
+        let state = AppState::default();
+        warm_speech(&state);
+        assert_eq!(release_speech_model(&state), Ok(()), "nothing loaded yet");
+    }
 }
 
 #[cfg(test)]
