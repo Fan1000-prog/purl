@@ -26,6 +26,26 @@ pub enum DownloadError {
     Cancelled,
     #[error("Couldn't save the file: {0}")]
     Io(String),
+    /// The download code panicked; reported instead of leaving the model
+    /// stuck in "downloading".
+    #[error("The download stopped unexpectedly. Press Retry.")]
+    Stopped,
+}
+
+impl DownloadError {
+    /// A stable name for the failure, so the UI can pick its own wording or
+    /// action (e.g. "free up space") without parsing the message.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            DownloadError::DiskFull { .. } => "disk_full",
+            DownloadError::Offline => "offline",
+            DownloadError::Http(_) => "http",
+            DownloadError::Checksum => "checksum",
+            DownloadError::Cancelled => "cancelled",
+            DownloadError::Io(_) => "io",
+            DownloadError::Stopped => "stopped",
+        }
+    }
 }
 
 impl From<std::io::Error> for DownloadError {
@@ -46,7 +66,22 @@ const MB: u64 = 1024 * 1024;
 
 /// Fetch every file of `spec` into `model_dir(app_data, spec.id)`, skipping
 /// files already verified. Blocking; run it off the main thread.
+///
+/// A panic inside (including in `on_progress`) comes back as `Stopped`, so
+/// a caller tracking the download always hears how it ended.
 pub fn download_model(
+    spec: &ModelSpec,
+    app_data: &Path,
+    cancel: &AtomicBool,
+    on_progress: &mut dyn FnMut(Progress),
+) -> Result<(), DownloadError> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        fetch_model(spec, app_data, cancel, on_progress)
+    }))
+    .unwrap_or(Err(DownloadError::Stopped))
+}
+
+fn fetch_model(
     spec: &ModelSpec,
     app_data: &Path,
     cancel: &AtomicBool,
@@ -155,11 +190,15 @@ fn fetch_file(
     }
 
     if have < file.size {
-        let mut request = client.get(file.url);
-        if have > 0 {
-            request = request.header(reqwest::header::RANGE, format!("bytes={have}-"));
+        let mut response = request(client, file, have)?;
+        if response.status() == reqwest::StatusCode::RANGE_NOT_SATISFIABLE && have > 0 {
+            // The server can't resume from this .part (the file changed
+            // upstream, or the part is bad). Keeping it would fail every
+            // Retry, so drop it and start over once.
+            fs::remove_file(&part)?;
+            have = 0;
+            response = request(client, file, 0)?;
         }
-        let mut response = request.send().map_err(network_error)?;
         let status = response.status();
         let mut out = if status == reqwest::StatusCode::PARTIAL_CONTENT {
             OpenOptions::new().append(true).create(true).open(&part)?
@@ -184,6 +223,13 @@ fn fetch_file(
             if n == 0 {
                 break;
             }
+            if have + n as u64 > file.size {
+                // More bytes than the registry pins can't be the right file;
+                // stop before a misbehaving server fills the disk.
+                drop(out);
+                fs::remove_file(&part)?;
+                return Err(DownloadError::Checksum);
+            }
             out.write_all(&buf[..n])?;
             have += n as u64;
             on_bytes(have);
@@ -201,6 +247,19 @@ fn fetch_file(
     fs::rename(&part, dir.join(file.name))?;
     fs::write(ok_marker(dir, file), file.sha256)?;
     Ok(())
+}
+
+/// GET `file`, asking for the bytes from `from` onward when resuming.
+fn request(
+    client: &reqwest::blocking::Client,
+    file: &ModelFile,
+    from: u64,
+) -> Result<reqwest::blocking::Response, DownloadError> {
+    let mut request = client.get(file.url);
+    if from > 0 {
+        request = request.header(reqwest::header::RANGE, format!("bytes={from}-"));
+    }
+    request.send().map_err(network_error)
 }
 
 fn network_error(e: reqwest::Error) -> DownloadError {
@@ -247,6 +306,28 @@ mod tests {
             DownloadError::Http(503).to_string(),
             "The download server said 503. Press Retry in a minute."
         );
+    }
+
+    #[test]
+    fn kind_names_each_failure_for_the_ui() {
+        let cases = [
+            (
+                DownloadError::DiskFull {
+                    need_mb: 1,
+                    have_mb: 0,
+                },
+                "disk_full",
+            ),
+            (DownloadError::Offline, "offline"),
+            (DownloadError::Http(500), "http"),
+            (DownloadError::Checksum, "checksum"),
+            (DownloadError::Cancelled, "cancelled"),
+            (DownloadError::Io("x".into()), "io"),
+            (DownloadError::Stopped, "stopped"),
+        ];
+        for (error, kind) in cases {
+            assert_eq!(error.kind(), kind, "{error:?}");
+        }
     }
 
     #[test]
