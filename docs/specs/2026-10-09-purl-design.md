@@ -3,7 +3,7 @@
 **Date:** 2026-10-09
 **Status:** design approved in chat 2026-10-09; this file awaits review
 **Origin:** VendastaTalk v0.8.0 (`Citizen_Developer_Projects/Users/fani-bango/Vendasta-Talk`), Tauri v2, ~6k lines Rust + ~2.5k lines TS
-**Brand:** Brand v2, made fresh (amended 2026-10-10; the Purl-Design kit is dropped). References: wisprflow.ai, Heidi Dictate
+**Brand:** `~/Desktop/Purl-Design/02-motion` motion pack + `01-logo-locked` logo (amended 2026-10-10)
 
 ## Goal
 
@@ -181,25 +181,31 @@ a permission prompt that leads nowhere.
 
 ## Redesign
 
-*Amended 2026-10-10: the `~/Desktop/Purl-Design` kit (logo, mascot, palette) is dropped as too playful.
-The name stays Purl.*
+*Amended 2026-10-10 (second time): the direction is the user's motion pack at
+`~/Desktop/Purl-Design/02-motion`, with the locked logo from `~/Desktop/Purl-Design/01-logo-locked`.
+It replaces both the mascot kit and the interim "Brand v2" (Newsreader/Inter), which are rejected.*
 
-- **References:** wisprflow.ai and Heidi Health's Dictate page. Take their composition, rhythm and
-  restraint, not their text, logos, illustrations or distinctive assets. Both are real companies, and
-  Wispr Flow is a direct competitor, so Purl must not be mistaken for either.
-- **Direction:** calm, grown-up, editorial. A warm off-white or near-black canvas, one restrained accent,
-  a refined serif for display paired with a clean sans for UI, generous whitespace, and real product UI
-  (the overlay pill, the app window) as the hero visual instead of a character.
-- **Identity, made fresh in "Brand v2":** a wordmark and a simple geometric app icon/mark that reads at
-  16 px; colour and type tokens; light and dark themes following the OS. All fonts OFL, bundled locally
-  (the app makes no Google Fonts call).
-- **No mascot.** State is shown by the overlay pill itself: a live level meter while listening, a subtle
-  progress shimmer while cleaning up, a check when sent, an error line when something fails. Static under
-  `prefers-reduced-motion`.
-- One token set drives both the app and the landing page.
-- Onboarding: 4 steps — welcome → mic (+ Accessibility on macOS) → speech model download with progress →
-  try it. Smart cleanup offered afterwards, not in the critical path.
-- Screens: Home (recent + stats), Dictionary, Snippets, Transforms, Settings. Every screen has a designed
+- **Identity:** the locked speech-bubble **p** with the breath tick (bead + sound arc), used exactly as drawn.
+  No faces, eyes or characters.
+- **Palette:** Night `#12100E`, Ink `#1F1A17`, Deep `#2A231E`, Fern `#3F6B4B`, Fern Glow `#7BC48C`,
+  Sprout `#B7CDA3`, Butter `#F3D36B`, Ember `#EC8A5A`, Terracotta `#C0683F`, Cream `#F7F1E8`.
+  The **Purl Spectrum** (Fern Glow → Sprout → Butter → Ember → Terracotta) appears only in "polish" moments.
+  Dark is the primary surface; cream is the light theme.
+- **Type:** Instrument Serif (display, roman + italic), Geist (UI), Geist Mono (labels, timers). All OFL,
+  bundled locally.
+- **One design system** (`brand/` in purl-site: tokens, fonts, logo, live components) drives both the landing
+  page and the app. The app vendors it. App contract tokens: `--bg --surface --text --muted --accent
+  --accent-ink --warn --warn-text --line --font-display --font-ui --font-mono`.
+- **Live components, not video, in the app:** the dictation pill (idle with the real hotkey → listening with a
+  waveform driven by mic level + timer → polishing with spectrum border/shimmer → sent → error) and the voice
+  orb (idle/listening/polishing/done). Static under `prefers-reduced-motion`.
+- **Landing page:** uses the pack's hero, product demo, how-it-works and works-anywhere motion (WebM first,
+  lazy-loaded, posters under reduced motion), with live HTML text for headings.
+- **References:** the pack borrows *patterns* from wisprflow.ai and Heidi Dictate. No text, logos, footage or
+  assets from either; Purl must not be mistakable for Wispr Flow (a competitor).
+- Onboarding: 4 steps (welcome → mic (+ Accessibility on macOS) → speech model download with progress →
+  try it). Smart cleanup is offered afterwards.
+- Screens: Home (orb, recent + stats), Dictionary, Snippets, Transforms, Settings. Every screen has a designed
   empty state and error state.
 
 ## Error handling and edge cases (QA matrix)
@@ -254,8 +260,7 @@ The name stays Purl.*
   how to reproduce), Case study (VendastaTalk → Purl: what problem, what changed,
   measured results), Credits & licences (Parakeet CC-BY-4.0, transcribe-rs, ONNX Runtime, llama.cpp,
   Qwen, fonts), Contributing, MIT.
-- **Landing page:** static site (Vite + plain TS, no framework needed), in the
-  spirit of Wispr Flow and Heidi Dictate: big serif hero, the real overlay pill listening, a live
+- **Landing page:** static site (Vite + plain TS, no framework needed), built from the 02-motion pack: serif hero with spectrum italic, the dictation pill listening, a live
   "messy speech → clean text" demo, three feature bands (private, fast, works
   everywhere), benchmark strip, download buttons that detect OS, FAQ, footer.
   Lighthouse ≥ 95 performance/accessibility, works at 360 px wide.
@@ -269,7 +274,7 @@ reviewed by a fresh reviewer agent before merge:
 |---|---|
 | Engine SWE | `engine/` (ModelStore, transcribe-rs STT, llama-server LLM), delete whisper/Ollama/BYOK |
 | Platform SWE | `platform/` traits, Windows injector/locator/overlay, CI matrix, installers |
-| App designer + FE | Brand v2 tokens in the app, overlay states, onboarding, all screens |
+| Design lead + app/web designers | Shared design system from the motion pack; app and landing page on it |
 | Web designer + FE | `purl-site` landing page |
 | QA engineer | Edge-case matrix, benchmark runs, Playwright smoke |
 | Reviewer | Fresh per PR |
