@@ -218,21 +218,7 @@ kbd {
   border-color: var(--rec);
 }
 
-/* The onboarding wizard's own checklist (step 3) drops the status dot
-   entirely — the fix hint below a bad item already carries that signal,
-   and the plain list read cleaner without it. */
-#wiz-body ul.wiz-checks {
-  list-style: none;
-  margin: 0 0 10px;
-  padding: 0;
-}
-
-#wiz-body ul.wiz-checks .mark {
-  display: none;
-}
-
-#check-items .fix,
-#wiz-body ul.wiz-checks .fix {
+#check-items .fix {
   flex-basis: 100%;
   margin-left: 19px;
   font-size: 12px;
@@ -967,12 +953,11 @@ footer {
 }
 
 .wizard-card h2 { font-family: var(--font-title); font-size: 20px; font-weight: 400; margin: 0 0 10px; }
-#wiz-body p { font-size: 13px; line-height: 1.55; color: var(--muted); margin: 0 0 10px; }
 
 /* The notice cards reuse .meta for body copy, but .meta is sized for a
    one-line caption under a form field — 12px, 4px of top margin, no
    line-height. Stacked into paragraphs that reads as one solid block, so
-   give them the wizard's own body treatment instead. */
+   give them a paragraph treatment instead. */
 #field-notice p.meta,
 #update-notice p.meta {
   font-size: 13px;
@@ -986,8 +971,6 @@ footer {
    the explanation rather than blending into it. */
 #field-notice p.meta strong,
 #update-notice p.meta strong { color: var(--text); font-weight: 600; }
-#wiz-body .transcript { color: var(--text); }
-#wiz-body .feature-grid { margin-top: 4px; }
 
 .wizard-foot {
   display: flex;

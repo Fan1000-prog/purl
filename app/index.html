@@ -5,6 +5,7 @@
     <link rel="stylesheet" href="/src/styles/tokens.css" />
     <link rel="stylesheet" href="/src/styles/base.css" />
     <link rel="stylesheet" href="/src/styles.css" />
+    <link rel="stylesheet" href="/src/styles/onboarding.css" />
     <link rel="icon" type="image/svg+xml" href="/brand/purl-favicon-colour.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Purl</title>
@@ -259,17 +260,7 @@
         </section>
       </main>
     </div>
-    <div id="onboarding" class="wizard-backdrop hidden">
-      <div class="wizard-card" role="dialog" aria-modal="true" aria-labelledby="wiz-title">
-        <h2 id="wiz-title"></h2>
-        <div id="wiz-body"></div>
-        <div class="wizard-foot">
-          <button id="wiz-skip" class="ghost" type="button">Skip</button>
-          <span id="wiz-progress" class="meta"></span>
-          <button id="wiz-next" class="ghost wiz-primary" type="button"></button>
-        </div>
-      </div>
-    </div>
+    <div id="onboarding" class="onb hidden" role="dialog" aria-modal="true" aria-labelledby="onb-title"></div>
     <!-- One-time notice for installs that updated into field reading and so
          never see the first-run wizard. Shown once, when onboarding is
          already complete and this has not been dismissed yet. Same chrome as

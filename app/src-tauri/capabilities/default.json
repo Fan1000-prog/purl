@@ -8,6 +8,13 @@
     "core:app:allow-version",
     "opener:default",
     "opener:allow-open-url",
+    {
+      "identifier": "opener:allow-open-url",
+      "allow": [
+        { "url": "x-apple.systempreferences:*" },
+        { "url": "ms-settings:privacy-microphone" }
+      ]
+    },
     "updater:default",
     "process:allow-restart",
     "notification:default",

@@ -1,3 +1,6 @@
+// Must stay first: installs the dev-only Tauri mock before anything calls it.
+import "./dev/mock-tauri";
+import { displayHotkey as prettyHotkey } from "./platform";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
@@ -169,14 +172,7 @@ function checkItem(ok: boolean, label: string, fix?: string): HTMLLIElement {
 }
 
 /// "CmdOrCtrl+Shift+Space" → "⌘⇧Space" for the kbd chip.
-export function prettyHotkey(hk: string): string {
-  return hk
-    .replace(/CmdOrCtrl|Command|Cmd|Super/gi, "⌘")
-    .replace(/Shift/gi, "⇧")
-    .replace(/Option|Alt/gi, "⌥")
-    .replace(/Control|Ctrl/gi, "⌃")
-    .replace(/\+/g, "");
-}
+export { prettyHotkey };
 
 async function refreshStatus() {
   const s = await invoke<StatusPayload>("get_status");
