@@ -274,8 +274,9 @@ reviewed by a fresh reviewer agent before merge:
 |---|---|
 | Engine SWE | `engine/` (ModelStore, transcribe-rs STT, llama-server LLM), delete whisper/Ollama/BYOK |
 | Platform SWE | `platform/` traits, Windows injector/locator/overlay, CI matrix, installers |
-| Design lead + app/web designers | Shared design system from the motion pack; app and landing page on it |
-| Web designer + FE | `purl-site` landing page |
+| Design lead | Shared `brand/` design system from the 02-motion pack |
+| App designer + FE | App on the shared system: live pill, Home orb, all screens |
+| Web designer + FE | `purl-site` landing page on the shared system |
 | QA engineer | Edge-case matrix, benchmark runs, Playwright smoke |
 | Reviewer | Fresh per PR |
 
