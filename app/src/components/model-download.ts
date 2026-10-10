@@ -134,8 +134,9 @@ export function mountModelDownload(el: HTMLElement, opts: ModelDownloadOptions):
     if (!model) {
       card.dataset.state = "failed";
       errorEl.hidden = false;
-      errorEl.textContent = `Purl doesn't know a model called "${opts.id}".`;
+      // Role first: an alert announces text inserted after it is set.
       errorEl.setAttribute("role", "alert");
+      errorEl.textContent = `Purl doesn't know a model called "${opts.id}".`;
       go.hidden = true;
       return;
     }
@@ -184,8 +185,9 @@ export function mountModelDownload(el: HTMLElement, opts: ModelDownloadOptions):
   void refresh().catch((err) => {
     card.dataset.state = "failed";
     errorEl.hidden = false;
-    errorEl.textContent = `Couldn't check the model (${String(err)}).`;
+    // Role first: an alert announces text inserted after it is set.
     errorEl.setAttribute("role", "alert");
+    errorEl.textContent = `Couldn't check the model (${String(err)}).`;
   });
 
   return {

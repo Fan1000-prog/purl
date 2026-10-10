@@ -32,6 +32,11 @@ function close(version: string) {
 }
 
 function show(version: string) {
+  // Correction learning (and so field reading) exists only on macOS.
+  $("fn-learning").hidden = platform() !== "macos";
+  // Nothing left to tell on this platform: skip the card rather than show
+  // an empty one.
+  if (![...document.querySelectorAll<HTMLElement>("#field-notice .fn-news")].some((p) => !p.hidden)) return;
   $<HTMLButtonElement>("fn-dismiss").addEventListener("click", () =>
     close(version),
   );

@@ -14,6 +14,7 @@
 //   fail=offline|diskfull|http   first download attempt fails this way
 //   onboarded=1             skip onboarding (onboarding_complete = true)
 //   disclosed=0             with onboarded=1: field reading not yet disclosed
+//   version=<v>             app version (default 0.9.0, the last one seen)
 //   models=ready            every model already downloaded
 //   step_ms=<n>             ms between progress events (default 120)
 //   data=demo               history, stats, dictionary, snippets, transforms,
@@ -248,7 +249,7 @@ function install() {
       return null;
     },
     toggle_recording: () => null,
-    "plugin:app|version": () => "0.9.0",
+    "plugin:app|version": () => q.get("version") ?? "0.9.0",
     "plugin:updater|check": () => null,
   };
 

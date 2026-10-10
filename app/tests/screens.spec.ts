@@ -195,4 +195,7 @@ test("the what's-new card owes the 90-second disclosure on macOS only", async ({
 
   await open(page, "&models=ready&disclosed=0&platform=windows");
   await expect(page.locator("#field-notice")).toBeHidden();
+  // A new version on Windows: still no field-reading paragraph, so no card.
+  await open(page, "&models=ready&platform=windows&version=1.0.0");
+  await expect(page.locator("#field-notice")).toBeHidden();
 });
