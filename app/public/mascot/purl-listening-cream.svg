@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="Purl — listening"><title>Purl mascot — listening</title><style>
+.a{transform-box:fill-box;}
+.body{transform-origin:30% 100%;}
+.eye{transform-origin:50% 50%;}
+.shadow{transform-origin:50% 50%;}
+.mouth{transform-origin:50% 50%;}
+
+.body{animation:nod 1s ease-in-out infinite;}
+@keyframes nod{0%,100%{transform:rotate(0) scale(1)}50%{transform:rotate(1.5deg) scale(1.012)}}
+.eye{animation:attn 2s ease-in-out infinite;}
+@keyframes attn{0%,100%{transform:scale(1)}50%{transform:scale(1.08)}}
+.mouth{animation:m 0.5s ease-in-out infinite;}
+@keyframes m{0%,100%{transform:scale(.8)}50%{transform:scale(1)}}
+.wave{animation:pulse 2s cubic-bezier(.3,.1,.4,1) infinite;opacity:0}
+.w0{animation-delay:0s}.w1{animation-delay:-1.333s}.w2{animation-delay:-.667s}
+@keyframes pulse{0%{opacity:0;transform:translateX(-6px) scale(.86)}18%{opacity:1}70%{opacity:.75}100%{opacity:0;transform:translateX(58px) scale(1.18)}}
+</style><rect width="512" height="512" fill="#F7F1E8"/><g transform="translate(-30,-12)"><ellipse class="a shadow" cx="250" cy="468" rx="92" ry="11" fill="#1F1A17" opacity="0.09"/><g class="a body"><circle cx="289.75" cy="225.5" r="112" fill="#FCF8F1"/><path d="M178 426 V218 A112 112 0 1 1 237.39 324.52" fill="none" stroke="#3F6B4B" stroke-width="50" stroke-linecap="round" stroke-linejoin="round"/><g class="a face"><ellipse cx="246" cy="236" rx="13" ry="7.5" fill="#F1D3BF"/><ellipse cx="334" cy="236" rx="13" ry="7.5" fill="#F1D3BF"/><g class="a eyes"><ellipse class="a eye" cx="266" cy="206" rx="11" ry="14" fill="#1F1A17"/><ellipse class="a eye" cx="314" cy="206" rx="11" ry="14" fill="#1F1A17"/><circle cx="269.5" cy="201" r="3.6" fill="#FCF8F1"/><circle cx="317.5" cy="201" r="3.6" fill="#FCF8F1"/></g><circle class="a mouth" cx="290" cy="246" r="9.5" fill="#C0683F"/></g></g><path class="a wave w0" d="M437.7 159.6 A162 162 0 0 1 437.7 291.4" fill="none" stroke="#C0683F" stroke-width="14" stroke-linecap="round"/><path class="a wave w1" d="M437.7 159.6 A162 162 0 0 1 437.7 291.4" fill="none" stroke="#3F6B4B" stroke-width="14" stroke-linecap="round"/><path class="a wave w2" d="M437.7 159.6 A162 162 0 0 1 437.7 291.4" fill="none" stroke="#B7CDA3" stroke-width="14" stroke-linecap="round"/></g></svg>

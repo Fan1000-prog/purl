@@ -226,7 +226,7 @@ mod mac {
 
     /// How many times we'll ask one pid for the full tree before accepting
     /// that it is never going to produce one. Spans dictations, not polls, so
-    /// it needs headroom: a single 30s watch can ask several times.
+    /// it needs headroom: a single watch (up to 90s) can ask several times.
     const MAX_ENHANCE_ATTEMPTS: u8 = 6;
 
     /// Attempts spent per pid. Not a plain "already done" set: the request can
@@ -234,7 +234,7 @@ mod mac {
     /// still starting up, for instance — and a set would cache that first
     /// miss for the rest of the app's life, silently breaking learning in that
     /// app. A budget lets later watches retry, while still bounding the write
-    /// so a 30s watch polling every 600ms doesn't reissue it ~50 times.
+    /// so a watch polling every 600ms for up to 90s doesn't reissue it ~150 times.
     /// The same budget covers pid reuse after a process exits.
     static ENHANCE_ATTEMPTS: Mutex<Option<HashMap<i32, u8>>> = Mutex::new(None);
 
@@ -528,7 +528,7 @@ mod tests {
         }
     }
 
-    // The attempt budget keeps a 30s watch from reissuing the AX write on every
+    // The attempt budget keeps a watch (up to 90s) from reissuing the AX write on every
     // 600ms poll, while still letting a later dictation retry an app that
     // wasn't ready the first time (a cold Chrome). Asserted on the counter
     // rather than the return value: `ensure_enhanced_accessibility` reports

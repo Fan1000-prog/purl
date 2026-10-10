@@ -1,62 +1,16 @@
-/* Retro-desktop utility skin: warm parchment surface, thick ink outlines,
-   flat offset "sticker" shadows instead of blur, mono type for structure
-   (headings/labels/chrome), system sans for reading copy. Color is a signal
-   (green = ready/go, rust = recording, mustard = a label), never decoration —
-   one accent per surface, not a rainbow of pastel fills.
-
-   Type roles: Fraunces for titles (Gaudi Catalog is a commercial font we
-   don't have a license for; this is the closest open-license substitute —
-   a characterful display serif), Plus Jakarta Sans for body copy and
-   inputs (substitute for Atyp Text Medium, same reasoning), EB Garamond
-   Italic for the "Home" nav item only (as specified), Menlo for chrome
-   (buttons, tags, kbd chips, nav — unchanged). Only the weights actually
-   bundled below are ever requested, so nothing gets synthetic bold/italic. */
-
-@font-face {
-  font-family: "Fraunces";
-  src: url("./assets/fonts/Fraunces-Regular.woff2") format("woff2");
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: "Plus Jakarta Sans";
-  src: url("./assets/fonts/PlusJakartaSans-Medium.woff2") format("woff2");
-  font-weight: 500;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: "Plus Jakarta Sans";
-  src: url("./assets/fonts/PlusJakartaSans-Bold.woff2") format("woff2");
-  font-weight: 700;
-  font-style: normal;
-  font-display: swap;
-}
-
-@font-face {
-  font-family: "EB Garamond";
-  src: url("./assets/fonts/EBGaramond-Italic.woff2") format("woff2");
-  font-weight: 400;
-  font-style: italic;
-  font-display: swap;
-}
+/* Legacy view styles from the VendastaTalk import, now drawing on the Purl
+   tokens (src/styles/tokens.css) for colour and type. Task 10 replaces the
+   views; until then this file only maps its old names onto the tokens.
+   Menlo stays for chrome (buttons, tags, kbd chips). */
 
 :root {
-  --ink: #201b14;
-  --ink-2: #6b6255;
   --ink-3: #9a9080;
-  --paper: #ffffff;
-  --paper-raised: #ffffff;
-  --line: rgba(32, 27, 20, 0.18);
-  --chip: #f2f2ee;
-  --shadow-c: #201b14;
+  --chip: #F0E8DC;
+  --shadow-c: var(--ink);
 
-  --green: #2e9a63;
+  --green: var(--fern);
   --green-tint: #dceee1;
-  --rust: #c6553b;
+  --rust: var(--terracotta);
   --rust-tint: #f5ded7;
   --mustard: #b9852a;
   --mustard-tint: #f6e7c9;
@@ -72,14 +26,14 @@
   /* Menlo (not the "SF Mono"/ui-monospace pair) — matches reliably by name
      in every engine instead of silently falling through per element. */
   --font-mono: Menlo, Consolas, "Liberation Mono", monospace;
-  --font-title: "Fraunces", Georgia, serif;
-  --font-body: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --font-home: "EB Garamond", Georgia, serif;
+  --font-title: var(--font-display);
+  --font-body: var(--font-ui);
+  --font-home: var(--font-display);
 
   font-family: var(--font-body);
   font-size: clamp(14px, 0.35vw + 13px, 16px);
-  color: var(--ink);
-  background: var(--paper);
+  color: var(--text);
+  background: var(--bg);
 }
 
 * {
@@ -120,9 +74,9 @@ h1 {
   gap: 14px;
   width: 100%;
   padding: 16px;
-  border: 2px solid var(--ink);
+  border: 2px solid var(--text);
   border-radius: var(--radius);
-  background: var(--paper-raised);
+  background: var(--surface);
   box-shadow: var(--shadow-2);
   font: inherit;
   color: inherit;
@@ -153,9 +107,9 @@ h1 {
   width: 40px;
   height: 40px;
   border-radius: 50%;
-  border: 2px solid var(--ink);
-  background: var(--paper);
-  color: var(--ink);
+  border: 2px solid var(--text);
+  background: var(--bg);
+  color: var(--text);
   flex: none;
   transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease;
 }
@@ -187,19 +141,19 @@ h1 {
 
 .row-sub {
   font-size: 12px;
-  color: var(--ink-2);
+  color: var(--muted);
 }
 
 kbd {
   display: inline-block;
   padding: 1px 7px;
-  border: 1.5px solid var(--ink);
+  border: 1.5px solid var(--text);
   border-radius: 6px;
-  background: var(--paper);
+  background: var(--bg);
   font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 600;
-  color: var(--ink);
+  color: var(--text);
 }
 
 /* ---------- groups ---------- */
@@ -215,7 +169,7 @@ kbd {
   font-size: 15px;
   font-weight: 400;
   letter-spacing: 0.01em;
-  color: var(--ink);
+  color: var(--text);
   margin: 0 0 12px;
 }
 
@@ -264,25 +218,11 @@ kbd {
   border-color: var(--rec);
 }
 
-/* The onboarding wizard's own checklist (step 3) drops the status dot
-   entirely — the fix hint below a bad item already carries that signal,
-   and the plain list read cleaner without it. */
-#wiz-body ul.wiz-checks {
-  list-style: none;
-  margin: 0 0 10px;
-  padding: 0;
-}
-
-#wiz-body ul.wiz-checks .mark {
-  display: none;
-}
-
-#check-items .fix,
-#wiz-body ul.wiz-checks .fix {
+#check-items .fix {
   flex-basis: 100%;
   margin-left: 19px;
   font-size: 12px;
-  color: var(--ink-2);
+  color: var(--muted);
 }
 
 /* ---------- transcript ---------- */
@@ -332,7 +272,7 @@ kbd {
 }
 
 .muted {
-  color: var(--ink-2);
+  color: var(--muted);
 }
 
 /* Snippets' intro paragraph sits directly above the form with no divider
@@ -355,12 +295,12 @@ kbd {
 details summary {
   cursor: pointer;
   font-size: 12px;
-  color: var(--ink-2);
+  color: var(--muted);
   margin-bottom: 6px;
 }
 
 details summary:hover {
-  color: var(--ink);
+  color: var(--text);
 }
 
 /* ---------- settings form ---------- */
@@ -380,7 +320,7 @@ form {
 }
 
 .field > span:first-child {
-  color: var(--ink-2);
+  color: var(--muted);
 }
 
 .check-control {
@@ -414,11 +354,11 @@ select,
 textarea {
   font: inherit;
   font-size: 13px;
-  color: var(--ink);
+  color: var(--text);
   padding: 7px 9px;
-  border: 1.5px solid var(--ink);
+  border: 1.5px solid var(--text);
   border-radius: var(--radius-sm);
-  background: var(--paper-raised);
+  background: var(--surface);
   width: 100%;
 }
 
@@ -427,7 +367,7 @@ select:focus-visible,
 textarea:focus-visible {
   outline: 2px solid var(--green);
   outline-offset: 1px;
-  border-color: var(--ink);
+  border-color: var(--text);
 }
 
 input[type="checkbox"] {
@@ -483,11 +423,11 @@ button.ghost {
   font-family: var(--font-mono);
   font-size: 12px;
   font-weight: 700;
-  color: var(--ink);
+  color: var(--text);
   padding: 6px 13px;
-  border: 1.5px solid var(--ink);
+  border: 1.5px solid var(--text);
   border-radius: var(--radius-sm);
-  background: var(--paper-raised);
+  background: var(--surface);
   box-shadow: var(--shadow-1);
   cursor: pointer;
   transition: transform 0.08s ease, box-shadow 0.08s ease;
@@ -533,12 +473,12 @@ footer {
   gap: 5px;
   min-height: 132px;
   padding: 16px 14px 14px;
-  border: 2px solid var(--ink);
+  border: 2px solid var(--text);
   border-radius: var(--radius);
-  background: var(--paper-raised);
+  background: var(--surface);
   box-shadow: var(--shadow-1);
   font: inherit;
-  color: var(--ink);
+  color: var(--text);
   text-align: left;
   cursor: pointer;
   transition: transform 0.08s ease, box-shadow 0.08s ease;
@@ -551,7 +491,7 @@ footer {
   font-size: 9.5px;
   font-weight: 700;
   letter-spacing: 0.06em;
-  color: var(--accent, var(--ink-2));
+  color: var(--accent, var(--muted));
   border: 1px solid var(--accent, var(--line));
   border-radius: 5px;
   padding: 2px 6px;
@@ -568,7 +508,7 @@ footer {
 }
 
 .card-title { font-family: var(--font-title); font-size: 15px; font-weight: 400; }
-.card-sub { font-size: 12px; color: var(--ink-2); line-height: 1.45; }
+.card-sub { font-size: 12px; color: var(--muted); line-height: 1.45; }
 
 .card-snippets { --accent: var(--green); }
 .card-glossary { --accent: var(--mustard); }
@@ -579,18 +519,13 @@ footer {
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --ink: #ede6d6;
-    --ink-2: #b8ac96;
     --ink-3: #7c725f;
-    --paper: #1c1812;
-    --paper-raised: #242017;
-    --line: rgba(237, 230, 214, 0.16);
-    --chip: #2c2519;
+    --chip: var(--surface);
     --shadow-c: #000000;
 
-    --green: #4cb37e;
+    --green: var(--sprout);
     --green-tint: #1f3126;
-    --rust: #e07056;
+    --rust: var(--terracotta);
     --rust-tint: #3a231c;
     --mustard: #e0a83f;
     --mustard-tint: #3a2e17;
@@ -612,7 +547,7 @@ footer {
   flex: none;
   padding: 16px 10px;
   background: var(--chip);
-  border-right: 2px solid var(--ink);
+  border-right: 2px solid var(--text);
 }
 
 .brand {
@@ -634,7 +569,7 @@ footer {
   font-family: var(--font-title);
   font-size: 14px;
   font-weight: 400;
-  color: var(--ink-2);
+  color: var(--muted);
   text-align: left;
   padding: 8px 10px;
   border: 1.5px solid transparent;
@@ -643,7 +578,7 @@ footer {
   cursor: pointer;
 }
 
-/* Home stands out in Garamond italic, as specifically requested — every
+/* Home stands out in the display serif's italic — every
    other nav item uses the title face above (same as "Start dictation" /
    "What it can do"), not the mono chrome face. */
 .nav-btn[data-view="home"] {
@@ -654,14 +589,14 @@ footer {
 }
 
 .nav-btn:hover {
-  background: var(--paper-raised);
+  background: var(--surface);
   border-color: var(--line);
 }
 
 .nav-btn.active {
-  background: var(--paper-raised);
-  border-color: var(--ink);
-  color: var(--ink);
+  background: var(--surface);
+  border-color: var(--text);
+  color: var(--text);
   box-shadow: 2px 2px 0 var(--shadow-c);
 }
 
@@ -716,9 +651,9 @@ footer {
   gap: 2px;
   min-width: 160px;
   padding: 7px;
-  border: 2px solid var(--ink);
+  border: 2px solid var(--text);
   border-radius: var(--radius);
-  background: var(--paper-raised);
+  background: var(--surface);
   box-shadow: var(--shadow-2);
   opacity: 0;
   transform: translate(-6px, 4px) scale(0.96);
@@ -740,7 +675,7 @@ footer {
   font-size: 13px;
   font-weight: 400;
   text-align: left;
-  color: var(--ink-2);
+  color: var(--muted);
   padding: 7px 10px;
   border: 1.5px solid transparent;
   border-radius: var(--radius-sm);
@@ -765,13 +700,13 @@ footer {
 .flyout-item:hover,
 .flyout-item:focus-visible {
   background: var(--chip);
-  color: var(--ink);
+  color: var(--text);
 }
 
 .flyout-item.active {
-  background: var(--paper);
-  border-color: var(--ink);
-  color: var(--ink);
+  background: var(--bg);
+  border-color: var(--text);
+  color: var(--text);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -870,11 +805,11 @@ footer {
   gap: 8px;
   font-size: 13px;
   line-height: 1.5;
-  color: var(--ink-2);
+  color: var(--muted);
 }
 
 .tips strong {
-  color: var(--ink);
+  color: var(--text);
   font-weight: 700;
 }
 
@@ -884,9 +819,9 @@ footer {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  border: 2px solid var(--ink);
+  border: 2px solid var(--text);
   border-radius: var(--radius);
-  background: var(--paper-raised);
+  background: var(--surface);
   box-shadow: var(--shadow-2);
   padding: 16px 18px;
   margin-bottom: 10px;
@@ -907,9 +842,9 @@ footer {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  border: 1.5px solid var(--ink);
+  border: 1.5px solid var(--text);
   border-radius: var(--radius-sm);
-  background: var(--paper-raised);
+  background: var(--surface);
   box-shadow: 2px 2px 0 var(--shadow-c);
   padding: 12px;
 }
@@ -923,7 +858,7 @@ footer {
 
 .stat-label {
   font-size: 11px;
-  color: var(--ink-2);
+  color: var(--muted);
 }
 
 .heatmap {
@@ -981,7 +916,7 @@ footer {
 }
 
 .snippet-expansion {
-  color: var(--ink-2);
+  color: var(--muted);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   flex: 1;
@@ -1010,25 +945,24 @@ footer {
   width: min(440px, calc(100vw - 48px));
   max-height: calc(100vh - 48px);
   overflow-y: auto;
-  background: var(--paper-raised);
-  border: 2px solid var(--ink);
+  background: var(--surface);
+  border: 2px solid var(--text);
   border-radius: 18px;
   padding: 24px;
   box-shadow: 7px 7px 0 var(--shadow-c);
 }
 
 .wizard-card h2 { font-family: var(--font-title); font-size: 20px; font-weight: 400; margin: 0 0 10px; }
-#wiz-body p { font-size: 13px; line-height: 1.55; color: var(--ink-2); margin: 0 0 10px; }
 
 /* The notice cards reuse .meta for body copy, but .meta is sized for a
    one-line caption under a form field — 12px, 4px of top margin, no
    line-height. Stacked into paragraphs that reads as one solid block, so
-   give them the wizard's own body treatment instead. */
+   give them a paragraph treatment instead. */
 #field-notice p.meta,
 #update-notice p.meta {
   font-size: 13px;
   line-height: 1.65;
-  color: var(--ink-2);
+  color: var(--muted);
   margin: 0 0 14px;
 }
 #field-notice p.meta:last-of-type,
@@ -1036,9 +970,7 @@ footer {
 /* The lead-in of each paragraph carries the point; let it sit forward of
    the explanation rather than blending into it. */
 #field-notice p.meta strong,
-#update-notice p.meta strong { color: var(--ink); font-weight: 600; }
-#wiz-body .transcript { color: var(--ink); }
-#wiz-body .feature-grid { margin-top: 4px; }
+#update-notice p.meta strong { color: var(--text); font-weight: 600; }
 
 .wizard-foot {
   display: flex;
@@ -1047,8 +979,8 @@ footer {
   margin-top: 16px;
 }
 
-button.wiz-primary { background: var(--ink); color: var(--paper); border-color: var(--ink); box-shadow: 3px 3px 0 var(--shadow-c); }
-button.wiz-primary:hover:not(:disabled) { background: var(--ink); opacity: 0.88; }
+button.wiz-primary { background: var(--text); color: var(--bg); border-color: var(--text); box-shadow: 3px 3px 0 var(--shadow-c); }
+button.wiz-primary:hover:not(:disabled) { background: var(--text); opacity: 0.88; }
 button.wiz-primary:disabled { background: var(--ink-3); border-color: var(--ink-3); box-shadow: none; }
 
 /* ---------- transforms ---------- */
@@ -1075,11 +1007,11 @@ button.wiz-primary:disabled { background: var(--ink-3); border-color: var(--ink-
   flex-direction: column;
   gap: 7px;
   padding: 14px;
-  border: 2px solid var(--ink);
+  border: 2px solid var(--text);
   border-radius: var(--radius);
-  background: var(--paper-raised);
+  background: var(--surface);
   box-shadow: var(--shadow-1);
-  color: var(--ink);
+  color: var(--text);
   text-align: left;
   cursor: pointer;
   transition: transform 0.08s ease, box-shadow 0.08s ease;
@@ -1098,10 +1030,10 @@ button.wiz-primary:disabled { background: var(--ink-3); border-color: var(--ink-
   align-self: flex-start;
   font-size: 11px;
   padding: 2px 8px;
-  border: 1.5px solid var(--ink);
+  border: 1.5px solid var(--text);
   border-radius: 6px;
   background: var(--chip);
-  color: var(--ink-2);
+  color: var(--muted);
 }
 
 .transform-create {
@@ -1120,9 +1052,9 @@ button.wiz-primary:disabled { background: var(--ink-3); border-color: var(--ink-
   display: grid;
   place-items: center;
   border-radius: 50%;
-  border: 1.5px solid var(--ink);
-  background: var(--paper-raised);
-  color: var(--ink-2);
+  border: 1.5px solid var(--text);
+  background: var(--surface);
+  color: var(--muted);
   font-size: 15px;
 }
 
@@ -1141,13 +1073,13 @@ button.wiz-primary:disabled { background: var(--ink-3); border-color: var(--ink-
   border: none;
   padding: 0;
   font: inherit;
-  color: var(--ink-2);
+  color: var(--muted);
   text-decoration: underline;
   cursor: pointer;
   font-size: 0.85em;
 }
 .linklike:hover {
-  color: var(--ink);
+  color: var(--text);
 }
 
 /* Hotkey recorder (Settings + onboarding) */
@@ -1215,9 +1147,9 @@ button.wiz-primary:disabled { background: var(--ink-3); border-color: var(--ink-
   opacity: 0;
   font-family: var(--font-title);
   font-size: 14px;
-  color: var(--ink);
-  background: var(--paper-raised);
-  border: 2px solid var(--ink);
+  color: var(--text);
+  background: var(--surface);
+  border: 2px solid var(--text);
   border-radius: var(--radius);
   box-shadow: var(--shadow-2);
   padding: 10px 16px;
