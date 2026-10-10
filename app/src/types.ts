@@ -35,3 +35,5 @@ export interface LearnedRule {
   /** False while a risky rule waits for its second sighting. */
   active: boolean;
 }
+
+export type CleanupMode = "off" | "fast" | "smart";
