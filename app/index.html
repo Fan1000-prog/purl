@@ -5,6 +5,7 @@
     <link rel="stylesheet" href="/src/styles/tokens.css" />
     <link rel="stylesheet" href="/src/styles/base.css" />
     <link rel="stylesheet" href="/src/styles.css" />
+    <link rel="stylesheet" href="/src/styles/onboarding.css" />
     <link rel="icon" type="image/svg+xml" href="/brand/purl-favicon-colour.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Purl</title>
@@ -140,7 +141,7 @@
         <!-- ==================== TRANSFORMS ==================== -->
         <section class="view" id="view-transforms">
           <h2 class="eyebrow">Transforms</h2>
-          <p class="meta">Select text in any app, press a transform’s hotkey, and the AI rewrites it in place — polish an email, turn rough notes into a proper prompt, or teach it your own rewrite. Runs on whichever cleanup model you selected — local by default, or your cloud model if you chose one.</p>
+          <p class="meta">Select text in any app, press a transform’s hotkey, and the AI rewrites it in place — polish an email, turn rough notes into a proper prompt, or teach it your own rewrite. Runs on the Smart cleanup model, on this computer.</p>
           <div class="transforms-head">
             <h2 class="eyebrow">My Transforms</h2>
             <button id="transforms-reset" class="ghost" type="button">Reset to defaults</button>
@@ -161,18 +162,6 @@
               <h2 class="eyebrow">Preferences</h2>
               <form id="settings-form">
                 <div class="field"><span>Hotkey</span><div id="hotkey-recorder"></div></div>
-                <label class="field"><span>Cleanup model</span>
-                  <select id="cleanup-model">
-                    <option value="local:qwen2.5:3b">qwen2.5:3b — Recommended (local)</option>
-                    <option value="local:llama3.2:3b">llama3.2:3b (local)</option>
-                    <option value="gemini:gemini-3.5-flash-lite">Gemini 3.5 Flash-Lite — free tier (cloud)</option>
-                    <option value="gemini:gemini-3.5-flash">Gemini 3.5 Flash (cloud)</option>
-                    <option value="gemini:gemini-2.5-flash">Gemini 2.5 Flash (cloud)</option>
-                    <option value="claude:claude-haiku-4-5-20251001">Claude Haiku 4.5 (cloud)</option>
-                    <option value="claude:claude-sonnet-5">Claude Sonnet 5 (cloud)</option>
-                  </select>
-                </label>
-                <div class="field"><span></span><div id="cleanup-model-status" class="model-status"></div></div>
                 <label class="field"><span>Output</span>
                   <select id="inject-mode">
                     <option value="paste">Paste at cursor</option>
@@ -181,9 +170,15 @@
                 </label>
                 <label class="field"><span>Cleanup</span>
                   <select id="cleanup-mode">
-                    <option value="ai">AI — smarter, adds seconds</option>
                     <option value="fast">Fast — instant, rule-based</option>
-                    <option value="off">Off — raw transcript</option>
+                    <option value="smart">Smart — local AI model, adds a second or two</option>
+                    <option value="off">Off — paste exactly what was heard</option>
+                  </select>
+                </label>
+                <label class="field"><span>Smart model</span>
+                  <select id="smart-model">
+                    <option value="qwen3.5-2b">Qwen 3.5 2B — Recommended</option>
+                    <option value="qwen3.5-4b">Qwen 3.5 4B — slower, a little sharper</option>
                   </select>
                 </label>
                 <label class="field"><span>Structure</span>
@@ -202,7 +197,7 @@
                 <label class="field field-check"><span>Learn corrections</span>
                   <span class="check-row">
                     <input type="checkbox" id="learn-corrections" />
-                    <span class="meta">After pasting, Purl reads that text field for 30 seconds to notice words you fix by hand. Only the corrected word and the words either side of it are saved, and only on this Mac. Fields macOS marks as secure text — password fields — are never read, and learned words are never sent to a cloud model, even if you have cloud cleanup on. A dot appears beside the pill while it is watching; macOS won't prompt you, because this uses the same Accessibility permission as pasting.</span>
+                    <span class="meta">After pasting, Purl reads that text field for up to 90 seconds (less once you stop editing) to notice words you fix by hand. Only the corrected word and the words either side of it are saved, and only on this Mac. Fields macOS marks as secure text — password fields — are never read, and learned words never leave this computer. A dot appears beside the pill while it is watching; macOS won't prompt you, because this uses the same Accessibility permission as pasting.</span>
                   </span>
                 </label>
                 <div class="actions">
@@ -247,7 +242,7 @@
           <div class="settings-section" id="settings-section-learning">
             <section class="group">
               <h2 class="eyebrow">Learned corrections</h2>
-              <p class="meta">Words you have fixed by hand. Each one is used only in the phrase you corrected it in. They stay on this Mac: they go to a local cleanup model only, never to a cloud one.</p>
+              <p class="meta">Words you have fixed by hand. Each one is used only in the phrase you corrected it in. They stay on this computer.</p>
               <ul id="learned-list" class="snippet-list"></ul>
               <p id="learned-empty" class="meta">Nothing learned yet. Fix a mis-heard word right after dictating and it will show up here.</p>
               <div class="actions">
@@ -259,17 +254,7 @@
         </section>
       </main>
     </div>
-    <div id="onboarding" class="wizard-backdrop hidden">
-      <div class="wizard-card" role="dialog" aria-modal="true" aria-labelledby="wiz-title">
-        <h2 id="wiz-title"></h2>
-        <div id="wiz-body"></div>
-        <div class="wizard-foot">
-          <button id="wiz-skip" class="ghost" type="button">Skip</button>
-          <span id="wiz-progress" class="meta"></span>
-          <button id="wiz-next" class="ghost wiz-primary" type="button"></button>
-        </div>
-      </div>
-    </div>
+    <div id="onboarding" class="onb hidden" role="dialog" aria-modal="true" aria-labelledby="onb-title"></div>
     <!-- One-time notice for installs that updated into field reading and so
          never see the first-run wizard. Shown once, when onboarding is
          already complete and this has not been dismissed yet. Same chrome as
@@ -290,28 +275,11 @@
     <div id="field-notice" class="wizard-backdrop hidden">
       <div class="wizard-card" role="dialog" aria-modal="true" aria-labelledby="fn-title">
         <h2 id="fn-title">What's new</h2>
-        <p class="meta"><strong>Sharper dictation, your choice of model.</strong> Cleanup can now run on Gemini or Claude using your own API key. Faster, and better on long or accented speech. Set it up in Settings → Cleanup model.</p>
-        <p class="meta"><strong>Purl now learns from you.</strong> Fix a mis-heard word right after dictating and it will spell it your way next time.</p>
+        <p class="meta"><strong>Purl now learns from you.</strong> Fix a mis-heard word right after dictating and it will spell it your way next time. To notice the fix, Purl reads the text field it pasted into for up to 90 seconds after pasting (less once you stop editing). Password fields are never read, and you can turn this off in Settings → Learn corrections.</p>
+        <p class="meta err hidden" id="fn-error"></p>
         <div class="wizard-foot">
           <span class="meta"></span>
           <button id="fn-dismiss" class="ghost wiz-primary" type="button">Got it</button>
-        </div>
-      </div>
-    </div>
-    <div id="cloud-key-modal" class="wizard-backdrop hidden">
-      <div class="wizard-card" role="dialog" aria-modal="true" aria-labelledby="ck-title">
-        <h2 id="ck-title">Connect a cloud model</h2>
-        <p class="meta" id="ck-intro"></p>
-        <p><button type="button" class="ghost" id="ck-get-key">Get an API key →</button></p>
-        <label class="field"><span>API key</span>
-          <input type="password" id="ck-input" autocomplete="off" spellcheck="false" />
-        </label>
-        <p class="meta" id="ck-privacy"></p>
-        <p class="meta err hidden" id="ck-error"></p>
-        <div class="wizard-foot">
-          <button id="ck-cancel" class="ghost" type="button">Cancel</button>
-          <span id="ck-progress" class="meta"></span>
-          <button id="ck-save" class="ghost wiz-primary" type="button">Save &amp; Test</button>
         </div>
       </div>
     </div>

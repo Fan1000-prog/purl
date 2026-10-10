@@ -15,24 +15,16 @@ pub enum InjectMode {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
 pub enum CleanupMode {
-    /// Instant rule-based pass: strip filler words, fix glossary casing.
-    Fast,
-    /// Local LLM cleanup via Ollama — smarter but costs seconds per run.
-    Ai,
-    /// Paste the raw transcript verbatim.
+    /// Paste the transcript verbatim.
     Off,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum AiEngine {
-    /// Local Ollama model — nothing leaves the machine (default).
-    Local,
-    /// Anthropic Claude, using the user's own API key. Opt-in: transcript
-    /// text leaves the machine, so this must be an explicit choice.
-    Claude,
-    /// Google Gemini, using the user's own API key. Same tradeoff.
-    Gemini,
+    /// Instant rule-based pass: fillers, punctuation, dictionary casing.
+    Fast,
+    /// Local LLM via the bundled llama-server. Falls back to Fast on any failure.
+    Smart,
+    /// Pre-Purl value; read as Fast so old settings files still load.
+    #[serde(alias = "ai")]
+    #[serde(skip_serializing)]
+    LegacyAi,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
@@ -47,43 +39,19 @@ pub enum StructureMode {
     Coding,
 }
 
-/// The only two models the picker offers and the only two allowed persisted
-/// values. Anything else is coerced to DEFAULT_MODEL on load.
-pub const DEFAULT_MODEL: &str = "qwen2.5:3b";
-pub const ALT_MODEL: &str = "llama3.2:3b";
-
-pub fn is_allowed_model(model: &str) -> bool {
-    model == DEFAULT_MODEL || model == ALT_MODEL
-}
-
-pub const DEFAULT_CLAUDE_MODEL: &str = "claude-haiku-4-5-20251001";
-pub const DEFAULT_GEMINI_MODEL: &str = "gemini-3.5-flash-lite";
-
-/// Cloud model ids are validated, not allowlisted. Google rotates tiers
-/// faster than this app ships: three of the ids the picker offers postdate
-/// the first draft of this feature, and `gemini-2.0-flash` — once the
-/// free-tier workhorse — is now deprecated. A strict list would need a
-/// release per rotation, so anything plausibly an id is accepted and a
-/// hand-edited settings.json keeps working.
-pub fn is_allowed_cloud_model(model: &str) -> bool {
-    let m = model.trim();
-    !m.is_empty() && m.len() <= 128 && !m.chars().any(char::is_whitespace) && m == model
-}
+/// The Smart cleanup models a user can pick. Anything else is coerced to
+/// DEFAULT_SMART_MODEL on load.
+pub const SMART_MODELS: [&str; 2] = ["qwen3.5-2b", "qwen3.5-4b"];
+pub const DEFAULT_SMART_MODEL: &str = "qwen3.5-2b";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     pub hotkey: String,
-    pub ollama_model: String,
-    /// Which backend runs AI cleanup and transforms. API keys live in the
-    /// Keychain (see `secrets.rs`), never here.
-    pub ai_engine: AiEngine,
-    /// Model id sent to the Anthropic Messages API when `ai_engine` is Claude.
-    pub claude_model: String,
-    /// Model id sent to the Gemini API when `ai_engine` is Gemini.
-    pub gemini_model: String,
     pub inject_mode: InjectMode,
     pub cleanup_mode: CleanupMode,
+    /// Which model Smart cleanup runs; one of `SMART_MODELS`.
+    pub smart_model: String,
     /// Reshape transcript layout before pasting (e.g. email format).
     pub structure_mode: StructureMode,
     /// Spoken commands ("go down", "press enter") become keystrokes.
@@ -105,58 +73,44 @@ pub struct Settings {
     /// from a launch straight after an update: new users get the wizard, and
     /// showing them a changelog for a version they never ran would be noise.
     pub last_seen_version: String,
-    /// True once the one-time model-default migration has run, so a deliberate
-    /// choice of the alternate model is no longer auto-upgraded on every launch.
-    pub model_migrated: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Settings {
             hotkey: "CmdOrCtrl+Shift+Space".into(),
-            ollama_model: "qwen2.5:3b".into(),
-            ai_engine: AiEngine::Local,
-            claude_model: DEFAULT_CLAUDE_MODEL.into(),
-            gemini_model: DEFAULT_GEMINI_MODEL.into(),
             inject_mode: InjectMode::Paste,
-            cleanup_mode: CleanupMode::Ai,
+            cleanup_mode: CleanupMode::Fast,
+            smart_model: DEFAULT_SMART_MODEL.into(),
             structure_mode: StructureMode::None,
             command_detection: true,
             learn_corrections: true,
             onboarding_complete: false,
             field_reading_disclosed: false,
             last_seen_version: String::new(),
-            model_migrated: false,
         }
     }
 }
 
 impl Settings {
     pub fn load(path: &Path) -> Settings {
-        let mut settings: Settings = std::fs::read_to_string(path)
+        std::fs::read_to_string(path)
             .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default();
-        if !settings.model_migrated {
-            // One-time: move existing public-release users off the old default
-            // onto the qwen-tuned cleanup, and coerce any other unrecognized
-            // tag to the default. A deliberate ALT_MODEL choice made AFTER this
-            // migration is respected because the flag is then set.
-            if settings.ollama_model == ALT_MODEL || !is_allowed_model(&settings.ollama_model) {
-                settings.ollama_model = DEFAULT_MODEL.into();
-            }
-            settings.model_migrated = true;
-        } else if !is_allowed_model(&settings.ollama_model) {
-            settings.ollama_model = DEFAULT_MODEL.into();
+            .and_then(|s| serde_json::from_str::<Settings>(&s).ok())
+            .unwrap_or_default()
+            .sanitized()
+    }
+
+    /// Coerce values this version no longer accepts. Applied on load and on
+    /// every save from the UI, so a legacy or hand-edited value never runs.
+    pub fn sanitized(mut self) -> Settings {
+        if self.cleanup_mode == CleanupMode::LegacyAi {
+            self.cleanup_mode = CleanupMode::Fast;
         }
-        // Cloud ids are only sanity-checked; see `is_allowed_cloud_model`.
-        if !is_allowed_cloud_model(&settings.claude_model) {
-            settings.claude_model = DEFAULT_CLAUDE_MODEL.into();
+        if !SMART_MODELS.contains(&self.smart_model.as_str()) {
+            self.smart_model = DEFAULT_SMART_MODEL.into();
         }
-        if !is_allowed_cloud_model(&settings.gemini_model) {
-            settings.gemini_model = DEFAULT_GEMINI_MODEL.into();
-        }
-        settings
+        self
     }
 
     pub fn save(&self, path: &Path) -> std::io::Result<()> {
@@ -165,16 +119,6 @@ impl Settings {
         }
         std::fs::write(path, serde_json::to_string_pretty(self).unwrap())
     }
-
-    /// The model id for a cloud engine; empty for `Local`, which uses
-    /// `ollama_model` instead.
-    pub fn cloud_model(&self, engine: AiEngine) -> &str {
-        match engine {
-            AiEngine::Local => "",
-            AiEngine::Claude => &self.claude_model,
-            AiEngine::Gemini => &self.gemini_model,
-        }
-    }
 }
 
 #[cfg(test)]
@@ -182,90 +126,11 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cloud_model_validation_is_permissive_but_bounded() {
-        assert!(is_allowed_cloud_model("gemini-3.5-flash-lite"));
-        assert!(is_allowed_cloud_model("claude-sonnet-5"));
-        // Deliberately allowed: an id Google invents after this release ships.
-        assert!(is_allowed_cloud_model("gemini-9.9-flash-lite"));
-        assert!(!is_allowed_cloud_model(""));
-        assert!(!is_allowed_cloud_model("   "));
-        assert!(!is_allowed_cloud_model("has a space"));
-        assert!(!is_allowed_cloud_model(&"x".repeat(129)));
-    }
-
-    #[test]
-    fn ai_engine_defaults_to_local_and_round_trips() {
-        assert_eq!(Settings::default().ai_engine, AiEngine::Local);
-        assert_eq!(Settings::default().gemini_model, DEFAULT_GEMINI_MODEL);
-        assert_eq!(Settings::default().claude_model, DEFAULT_CLAUDE_MODEL);
-
-        let path = std::env::temp_dir().join("purl-settings-ai-engine.json");
-        let s = Settings {
-            ai_engine: AiEngine::Gemini,
-            model_migrated: true,
-            ..Default::default()
-        };
-        s.save(&path).unwrap();
-        let on_disk = std::fs::read_to_string(&path).unwrap();
-        assert!(on_disk.contains(r#""ai_engine": "gemini""#));
-        // The engine:model token is UI transport only — never persisted.
-        assert!(!on_disk.contains("gemini:gemini"));
-        assert_eq!(Settings::load(&path).ai_engine, AiEngine::Gemini);
-        std::fs::remove_file(&path).unwrap();
-    }
-
-    #[test]
-    fn legacy_settings_without_ai_engine_load_as_local() {
-        let path = std::env::temp_dir().join("purl-settings-legacy-engine.json");
-        std::fs::write(
-            &path,
-            r#"{"hotkey":"CmdOrCtrl+Shift+Space","ollama_model":"qwen2.5:3b","whisper_model_path":"","inject_mode":"paste","cleanup_mode":"ai","model_migrated":true}"#,
-        )
-        .unwrap();
-        let loaded = Settings::load(&path);
-        assert_eq!(loaded.ai_engine, AiEngine::Local);
-        assert_eq!(loaded.gemini_model, DEFAULT_GEMINI_MODEL);
-        assert_eq!(loaded.claude_model, DEFAULT_CLAUDE_MODEL);
-        std::fs::remove_file(&path).unwrap();
-    }
-
-    #[test]
-    fn invalid_cloud_model_resets_to_engine_default_on_load() {
-        let path = std::env::temp_dir().join("purl-settings-bad-cloud-model.json");
-        std::fs::write(
-            &path,
-            r#"{"ollama_model":"qwen2.5:3b","model_migrated":true,"ai_engine":"gemini","gemini_model":"bad model id"}"#,
-        )
-        .unwrap();
-        assert_eq!(Settings::load(&path).gemini_model, DEFAULT_GEMINI_MODEL);
-        std::fs::remove_file(&path).unwrap();
-    }
-
-    #[test]
-    fn selecting_a_cloud_engine_does_not_disturb_the_local_model() {
-        // Switching Local -> Gemini -> Local must preserve the local choice,
-        // which is why models are stored per engine rather than in one field.
-        let path = std::env::temp_dir().join("purl-settings-engine-switch.json");
-        let s = Settings {
-            ollama_model: ALT_MODEL.into(),
-            model_migrated: true,
-            ai_engine: AiEngine::Gemini,
-            ..Default::default()
-        };
-        s.save(&path).unwrap();
-        let loaded = Settings::load(&path);
-        assert_eq!(loaded.ollama_model, ALT_MODEL);
-        assert_eq!(loaded.cloud_model(AiEngine::Gemini), DEFAULT_GEMINI_MODEL);
-        assert_eq!(loaded.cloud_model(AiEngine::Local), "");
-        std::fs::remove_file(&path).unwrap();
-    }
-
-    #[test]
     fn defaults_are_sane() {
         let s = Settings::default();
         assert_eq!(s.hotkey, "CmdOrCtrl+Shift+Space");
-        assert_eq!(s.ollama_model, "qwen2.5:3b");
-        assert_eq!(s.cleanup_mode, CleanupMode::Ai);
+        assert_eq!(s.cleanup_mode, CleanupMode::Fast);
+        assert_eq!(s.smart_model, DEFAULT_SMART_MODEL);
         assert_eq!(s.inject_mode, InjectMode::Paste);
         assert_eq!(s.structure_mode, StructureMode::None);
         assert!(s.command_detection);
@@ -317,7 +182,7 @@ mod tests {
     }
 
     #[test]
-    fn legacy_settings_without_cleanup_mode_get_ai() {
+    fn legacy_settings_without_cleanup_mode_get_fast() {
         let path = std::env::temp_dir().join("purl-settings-legacy.json");
         std::fs::write(
             &path,
@@ -325,31 +190,7 @@ mod tests {
         )
         .unwrap();
         let loaded = Settings::load(&path);
-        assert_eq!(loaded.cleanup_mode, CleanupMode::Ai);
-        std::fs::remove_file(&path).unwrap();
-    }
-
-    #[test]
-    fn old_default_model_migrates_to_new_default() {
-        let path = std::env::temp_dir().join("purl-settings-model-migration.json");
-        std::fs::write(
-            &path,
-            r#"{"hotkey":"CmdOrCtrl+Shift+Space","ollama_model":"llama3.2:3b","whisper_model_path":"","inject_mode":"paste","cleanup_mode":"fast"}"#,
-        )
-        .unwrap();
-        assert_eq!(Settings::load(&path).ollama_model, "qwen2.5:3b");
-        std::fs::remove_file(&path).unwrap();
-    }
-
-    #[test]
-    fn unrecognized_model_resets_to_default_on_first_migration() {
-        let path = std::env::temp_dir().join("purl-settings-model-custom.json");
-        std::fs::write(
-            &path,
-            r#"{"hotkey":"CmdOrCtrl+Shift+Space","ollama_model":"qwen3:8b","whisper_model_path":"","inject_mode":"paste","cleanup_mode":"fast"}"#,
-        )
-        .unwrap();
-        assert_eq!(Settings::load(&path).ollama_model, "qwen2.5:3b");
+        assert_eq!(loaded.cleanup_mode, CleanupMode::Fast);
         std::fs::remove_file(&path).unwrap();
     }
 
@@ -357,14 +198,15 @@ mod tests {
     fn round_trips_through_disk() {
         let path = std::env::temp_dir().join("purl-settings-test.json");
         let s = Settings {
-            ollama_model: "llama3.2:3b".into(),
-            model_migrated: true,
+            cleanup_mode: CleanupMode::Smart,
+            smart_model: "qwen3.5-4b".into(),
             inject_mode: InjectMode::ClipboardOnly,
             ..Default::default()
         };
         s.save(&path).unwrap();
         let loaded = Settings::load(&path);
-        assert_eq!(loaded.ollama_model, "llama3.2:3b");
+        assert_eq!(loaded.cleanup_mode, CleanupMode::Smart);
+        assert_eq!(loaded.smart_model, "qwen3.5-4b");
         assert_eq!(loaded.inject_mode, InjectMode::ClipboardOnly);
         std::fs::remove_file(&path).unwrap();
     }
@@ -426,39 +268,50 @@ mod tests {
     }
 
     #[test]
-    fn model_migrated_defaults_false_and_sets_true_on_load() {
-        assert!(!Settings::default().model_migrated);
-        let path = std::env::temp_dir().join("purl-settings-migflag.json");
+    fn legacy_ai_mode_loads_as_fast() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("settings.json");
         std::fs::write(
-            &path,
-            r#"{"hotkey":"CmdOrCtrl+Shift+Space","ollama_model":"llama3.2:3b","whisper_model_path":"","inject_mode":"paste","cleanup_mode":"ai"}"#,
+            &p,
+            r#"{"cleanup_mode":"ai","ai_engine":"claude","ollama_model":"qwen2.5:3b"}"#,
         )
         .unwrap();
-        assert!(Settings::load(&path).model_migrated);
-        std::fs::remove_file(&path).unwrap();
+        let s = Settings::load(&p);
+        assert_eq!(s.cleanup_mode, CleanupMode::Fast);
+        assert_eq!(s.smart_model, "qwen3.5-2b");
     }
 
     #[test]
-    fn deliberate_llama_choice_survives_after_migration() {
-        let path = std::env::temp_dir().join("purl-settings-llama-kept.json");
-        std::fs::write(
-            &path,
-            r#"{"hotkey":"CmdOrCtrl+Shift+Space","ollama_model":"llama3.2:3b","whisper_model_path":"","inject_mode":"paste","cleanup_mode":"ai","model_migrated":true}"#,
-        )
-        .unwrap();
-        assert_eq!(Settings::load(&path).ollama_model, "llama3.2:3b");
-        std::fs::remove_file(&path).unwrap();
+    fn unknown_smart_model_is_coerced() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("settings.json");
+        std::fs::write(&p, r#"{"cleanup_mode":"smart","smart_model":"gpt-9"}"#).unwrap();
+        assert_eq!(Settings::load(&p).smart_model, "qwen3.5-2b");
     }
 
+    /// Removed fields must not be written back: a saved file carries no
+    /// trace of the cloud engines or Ollama.
     #[test]
-    fn unrecognized_model_resets_even_after_migration() {
-        let path = std::env::temp_dir().join("purl-settings-invalid-postmig.json");
+    fn saved_settings_carry_no_legacy_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("settings.json");
         std::fs::write(
-            &path,
-            r#"{"hotkey":"CmdOrCtrl+Shift+Space","ollama_model":"qwen3:8b","whisper_model_path":"","inject_mode":"paste","cleanup_mode":"ai","model_migrated":true}"#,
+            &p,
+            r#"{"cleanup_mode":"ai","ai_engine":"gemini","gemini_model":"x","ollama_model":"qwen2.5:3b","model_migrated":true}"#,
         )
         .unwrap();
-        assert_eq!(Settings::load(&path).ollama_model, "qwen2.5:3b");
-        std::fs::remove_file(&path).unwrap();
+        Settings::load(&p).save(&p).unwrap();
+        let on_disk = std::fs::read_to_string(&p).unwrap();
+        for gone in [
+            "ai_engine",
+            "gemini",
+            "claude",
+            "ollama",
+            "whisper_model_path",
+            "model_migrated",
+        ] {
+            assert!(!on_disk.contains(gone), "{gone} survived a save: {on_disk}");
+        }
+        assert!(on_disk.contains(r#""cleanup_mode": "fast""#));
     }
 }
