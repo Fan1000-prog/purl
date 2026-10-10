@@ -335,7 +335,7 @@ const WATCH_SETTLED_POLLS: usize = 20; // 12 seconds
 /// indicator, the store, the log, and whether this watcher is still the
 /// current one. Split out so `run_correction_watch` — where the exit paths
 /// and the supersession rule live — can be tested without an `AppHandle`
-/// and without waiting 30 real seconds.
+/// and without waiting 90 real seconds.
 trait WatchHost {
     fn wait(&self, d: std::time::Duration);
     /// Light or clear the disclosure dot.
@@ -1364,6 +1364,21 @@ struct ModelDoneEvent {
     id: &'static str,
     ok: bool,
     error: Option<String>,
+    /// `DownloadError::kind`; None when ok.
+    kind: Option<&'static str>,
+}
+
+fn model_done(
+    id: &'static str,
+    result: &Result<(), engine::download::DownloadError>,
+) -> ModelDoneEvent {
+    let failure = result.as_ref().err();
+    ModelDoneEvent {
+        id,
+        ok: failure.is_none(),
+        error: failure.map(|e| e.to_string()),
+        kind: failure.map(|e| e.kind()),
+    }
 }
 
 #[tauri::command]
@@ -1392,19 +1407,17 @@ fn download_model(app: AppHandle, state: tauri::State<AppState>, id: String) -> 
                 },
             );
         });
-        let error = result.err().map(|e| e.to_string());
+        let done = model_done(spec.id, &result);
         log_line(
             &app,
             &format!(
                 "model {}: download {}",
                 spec.id,
-                error.as_deref().unwrap_or("ok")
+                done.error.as_deref().unwrap_or("ok")
             ),
         );
-        app.state::<AppState>()
-            .downloads
-            .finish(spec.id, error.clone());
-        if error.is_none() && spec.id == engine::stt::MODEL_ID {
+        app.state::<AppState>().downloads.finish(spec.id, &result);
+        if result.is_ok() && spec.id == engine::stt::MODEL_ID {
             stt(&app).warm();
         }
         if spec.kind == engine::models::Kind::Llm {
@@ -1416,18 +1429,11 @@ fn download_model(app: AppHandle, state: tauri::State<AppState>, id: String) -> 
                 .unwrap()
                 .cleanup_mode
                 == CleanupMode::Smart;
-            if error.is_none() && smart_on {
+            if result.is_ok() && smart_on {
                 llm(&app).warm();
             }
         }
-        let _ = app.emit(
-            "model-done",
-            ModelDoneEvent {
-                id: spec.id,
-                ok: error.is_none(),
-                error,
-            },
-        );
+        let _ = app.emit("model-done", done);
     });
     Ok(())
 }
@@ -1759,6 +1765,33 @@ mod pipeline_end_state_tests {
         ] {
             assert_eq!(pipeline_end_state(&Err(e.into())), "error");
         }
+    }
+}
+
+#[cfg(test)]
+mod model_done_tests {
+    use super::model_done;
+    use crate::engine::download::DownloadError;
+
+    #[test]
+    fn success_has_no_error_or_kind() {
+        let json = serde_json::to_value(model_done("parakeet-v3", &Ok(()))).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({"id": "parakeet-v3", "ok": true, "error": null, "kind": null})
+        );
+    }
+
+    #[test]
+    fn failure_carries_message_and_kind() {
+        let json =
+            serde_json::to_value(model_done("qwen3.5-2b", &Err(DownloadError::Offline))).unwrap();
+        assert_eq!(json["ok"], false);
+        assert_eq!(json["kind"], "offline");
+        assert_eq!(
+            json["error"],
+            "You're offline. Connect to the internet and press Retry."
+        );
     }
 }
 
@@ -2124,7 +2157,7 @@ mod correction_watch_tests {
     }
 
     /// The bug this trait exists to pin. A superseded watcher must stop
-    /// polling — it was reading whatever now has focus, for up to 30s after
+    /// polling — it was reading whatever now has focus, for up to 90s after
     /// the dot went dark — and must not clear an indicator the newer watcher
     /// now owns.
     #[test]

@@ -7,20 +7,32 @@
 //! looked for, so nothing removed later can join a tag back together.
 
 /// Characters that render as nothing (or reorder what is shown): bidi
-/// embeddings/overrides/isolates, line/paragraph separators, zero-width
-/// characters and joiners, word joiner and invisible operators, BOM, soft
-/// hyphen.
+/// embeddings/overrides/isolates and the Arabic letter mark, line/paragraph
+/// separators, zero-width characters and joiners, combining grapheme joiner,
+/// Mongolian vowel separator, word joiner and invisible operators, BOM, soft
+/// hyphen, variation selectors, Hangul fillers, and the Unicode Tag block
+/// (invisible, but LLMs read it as ASCII).
 fn is_hidden(c: char) -> bool {
     matches!(
         c,
         '\u{202A}'..='\u{202E}'
             | '\u{2066}'..='\u{2069}'
+            | '\u{061C}'
             | '\u{2028}'
             | '\u{2029}'
             | '\u{200B}'..='\u{200F}'
+            | '\u{034F}'
+            | '\u{180E}'
             | '\u{2060}'..='\u{2064}'
             | '\u{FEFF}'
             | '\u{00AD}'
+            | '\u{FE00}'..='\u{FE0F}'
+            | '\u{E0100}'..='\u{E01EF}'
+            | '\u{115F}'
+            | '\u{1160}'
+            | '\u{3164}'
+            | '\u{FFA0}'
+            | '\u{E0000}'..='\u{E007F}'
     )
 }
 
@@ -30,8 +42,10 @@ fn fold(c: char) -> char {
     match c {
         // Fullwidth ASCII block: ！ through ～, including ＜ ＞ ／ and letters.
         '\u{FF01}'..='\u{FF5E}' => char::from_u32(c as u32 - 0xFEE0).unwrap_or(c),
-        '\u{FE64}' | '\u{2039}' | '\u{3008}' | '\u{2329}' => '<',
-        '\u{FE65}' | '\u{203A}' | '\u{3009}' | '\u{232A}' => '>',
+        '\u{FE64}' | '\u{2039}' | '\u{3008}' | '\u{2329}' | '\u{27E8}' | '\u{02C2}'
+        | '\u{1438}' | '\u{276C}' | '\u{FE3F}' | '\u{2770}' | '\u{29FC}' | '\u{27EA}' => '<',
+        '\u{FE65}' | '\u{203A}' | '\u{3009}' | '\u{232A}' | '\u{27E9}' | '\u{02C3}'
+        | '\u{1433}' | '\u{276D}' | '\u{FE40}' | '\u{2771}' | '\u{29FD}' | '\u{27EB}' => '>',
         _ => c,
     }
 }
@@ -121,15 +135,17 @@ pub fn defang_tags(s: &str, name: &str) -> String {
     out
 }
 
-/// The shortest leading run of `s` that normalizes to exactly one `name`
-/// tag (opening when `closing` is false), as a byte length. Works on the
-/// original text, so nothing outside the tag is altered. Tags are short, so
-/// only the first few characters are tried.
+/// The longest leading run of `s` that normalizes to exactly one `name`
+/// tag (opening when `closing` is false), as a byte length. Longest, so
+/// hidden characters right after the tag go with it. Works on the original
+/// text, so nothing outside the tag is altered. Tags are short, so only the
+/// first few characters are tried.
 pub fn leading_tag_len(s: &str, name: &str, closing: bool) -> Option<usize> {
     s.char_indices()
         .map(|(i, c)| i + c.len_utf8())
         .take(name.len() + 32)
-        .find(|&end| is_exactly_tag(&s[..end], name, closing))
+        .filter(|&end| is_exactly_tag(&s[..end], name, closing))
+        .last()
 }
 
 /// Like `leading_tag_len`, for a tag at the very end of `s`; returns the byte
@@ -139,7 +155,8 @@ pub fn trailing_tag_start(s: &str, name: &str, closing: bool) -> Option<usize> {
         .rev()
         .map(|(i, _)| i)
         .take(name.len() + 32)
-        .find(|&start| is_exactly_tag(&s[start..], name, closing))
+        .filter(|&start| is_exactly_tag(&s[start..], name, closing))
+        .last()
 }
 
 /// Fence untrusted text in a `name` block for a prompt: tags of that name
@@ -203,7 +220,37 @@ mod tests {
         "</text >",
         "</text\n>",
         "<TEXT>",
+        // Invisible joiners, variation selectors and fillers inside the name.
+        "</te\u{34F}xt>",
+        "</te\u{FE0F}xt>",
+        "</te\u{180E}xt>",
+        "</te\u{61C}xt>",
+        "</te\u{E0101}xt>",
+        "</te\u{115F}\u{1160}\u{3164}\u{FFA0}xt>",
+        // Unicode Tag block ("ASCII smuggling") inside a visible tag.
+        "</te\u{E0078}\u{E007F}xt>",
+        // Angle-bracket lookalikes.
+        "\u{27E8}/text\u{27E9}",
+        "\u{02C2}/text\u{02C3}",
+        "\u{1438}/text\u{1433}",
+        "\u{276C}/text\u{276D}",
+        "\u{FE3F}/text\u{FE40}",
+        "\u{2770}/text\u{2771}",
+        "\u{29FC}/text\u{29FD}",
+        "\u{27EA}/text\u{27EB}",
     ];
+
+    /// "</text>" written entirely in Unicode Tag characters: invisible, but
+    /// read as ASCII by LLMs. Normalizing drops all of it.
+    const TAG_BLOCK_CLOSER: &str =
+        "\u{E003C}\u{E002F}\u{E0074}\u{E0065}\u{E0078}\u{E0074}\u{E003E}";
+
+    #[test]
+    fn tag_block_text_is_dropped() {
+        assert_eq!(normalize(TAG_BLOCK_CLOSER), "");
+        assert_eq!(defang_tags(&format!("a{TAG_BLOCK_CLOSER}b"), "text"), "ab");
+        assert_eq!(strip_angles_and_hidden(TAG_BLOCK_CLOSER), "");
+    }
 
     fn has_tag(s: &str) -> bool {
         !find_tags(&normalize(s), "text").is_empty()
@@ -244,5 +291,13 @@ mod tests {
             strip_angles_and_hidden("\u{FF1C}/x\u{FF1E} <y> \u{202E}z\u{2028}\u{200B}"),
             "/x y z"
         );
+    }
+
+    #[test]
+    fn leading_and_trailing_tags_absorb_hidden_neighbours() {
+        let s = "\u{200B}<text>\u{200B}hi\u{FE0F}</text>\u{200B}";
+        let start = leading_tag_len(s, "text", false).unwrap();
+        let end = trailing_tag_start(s, "text", true).unwrap();
+        assert_eq!(&s[start..end], "hi");
     }
 }
