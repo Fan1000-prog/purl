@@ -201,6 +201,10 @@ pub fn run(llm: &dyn LlmEngine, text: &str, transform_prompt: &str) -> Result<St
     if answer.is_empty() {
         return Err("The Smart model returned nothing".into());
     }
+    // It repeated its prompt; pasting that would put our tag in their text.
+    if fence.holds_name(&answer) {
+        return Err("The Smart model gave an odd answer".into());
+    }
     Ok(answer)
 }
 
@@ -374,6 +378,23 @@ mod tests {
         assert!(system.contains(open), "prompt doesn't name {open}");
         assert_eq!(user, format!("<{name}>\nhello there\n</{name}>"));
         assert_eq!(budget, TRANSFORM_BUDGET);
+    }
+
+    /// Echoes the fence's opening line (`<text-…>`) after its answer.
+    struct EchoLlm;
+    impl LlmEngine for EchoLlm {
+        fn complete(&self, _: &str, user: &str, _: Duration) -> Result<String, LlmError> {
+            let name = user.lines().next().unwrap().trim_matches(['<', '>']);
+            Ok(format!("Hello there. {name}"))
+        }
+        fn status(&self) -> EngineState {
+            EngineState::Ready
+        }
+    }
+
+    #[test]
+    fn an_echoed_fence_name_is_not_pasted() {
+        assert!(run(&EchoLlm, "hello there", POLISH_PROMPT).is_err());
     }
 
     #[test]

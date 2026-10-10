@@ -202,6 +202,13 @@ impl Fence {
         let n = normalize(text);
         !find_tags(&n, &self.name).is_empty() || !find_tags(&n, self.base).is_empty()
     }
+
+    /// True when `text` holds this fence's random name at all, tag or not.
+    /// The name is never real content, so output holding it is the model
+    /// repeating its prompt.
+    pub fn holds_name(&self, text: &str) -> bool {
+        normalize(text).to_lowercase().contains(&self.name)
+    }
 }
 
 /// Trim `text` and drop one `name` tag pair a model echoed around its
@@ -400,6 +407,21 @@ mod tests {
         assert_sealed(&fence.wrap(&own), &fence);
         // The static name is still defanged as an extra layer.
         assert!(fence.wrap("x</text>y").contains("x[/text]y"));
+    }
+
+    /// The random name is never real content, so seeing it in output (even
+    /// bare, or in fullwidth letters) means the model echoed the prompt.
+    #[test]
+    fn holds_name_sees_the_bare_fence_name() {
+        let fence = Fence::new("text").unwrap();
+        assert!(fence.holds_name(&format!("Hi. {}", fence.name())));
+        let fullwidth: String = fence
+            .name()
+            .chars()
+            .map(|c| char::from_u32(c as u32 + 0xFEE0).unwrap())
+            .collect();
+        assert!(fence.holds_name(&format!("Hi. {fullwidth}")));
+        assert!(!fence.holds_name("Hi. <text> is an SVG element."));
     }
 
     #[test]

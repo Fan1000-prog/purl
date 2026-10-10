@@ -150,6 +150,7 @@ pub fn guard(raw: &str, out: &str, transcript: &Fence) -> Result<String, &'stati
     let text = transcript.strip(text);
     let normalized = normalize(&text);
     if transcript.holds_tag(&text)
+        || transcript.holds_name(&text)
         || ["think", "dictionary"]
             .iter()
             .any(|name| !find_tags(&normalized, name).is_empty())
@@ -507,6 +508,20 @@ mod tests {
             "Hello \u{FF1C}/transcript\u{FF1E} friend"
         )
         .is_err());
+    }
+
+    /// The model repeating this request's tag name, bare or as the prompt's
+    /// "between <tag> and </tag>" line, is an echo of the prompt.
+    #[test]
+    fn guard_rejects_an_echoed_fence_name() {
+        let fence = Fence::new("transcript").unwrap();
+        let bare = format!("Hello there. {}", fence.name());
+        assert!(guard("hello there", &bare, &fence).is_err());
+        let line = format!(
+            "The transcript is between <{n}> and </{n}>. Hello there.",
+            n = fence.name()
+        );
+        assert!(guard("hello there", &line, &fence).is_err());
     }
 
     #[test]
