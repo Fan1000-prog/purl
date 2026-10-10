@@ -2,8 +2,8 @@
 //! LLM pass, which costs seconds per dictation on CPU-only machines.
 //!
 //! Deliberately conservative: strips only unambiguous filler words and fixes
-//! dictionary term casing. Whisper already provides punctuation and casing;
-//! false-start removal and rephrasing stay LLM-only (Settings → AI cleanup).
+//! dictionary term casing. The speech engine already provides punctuation and
+//! casing; false-start removal and rephrasing are left to Smart cleanup.
 
 use crate::dictionary::Dictionary;
 

@@ -248,7 +248,7 @@ mod tests {
         );
     }
 
-    // One-breath dictation: Whisper attaches commands as comma clauses
+    // One-breath dictation: speech-to-text can attach commands as comma clauses
     // ("Hi Nick, go down.") instead of standalone sentences.
     #[test]
     fn comma_separated_command_becomes_key() {
