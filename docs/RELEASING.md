@@ -4,10 +4,11 @@ A release is one version tag. Pushing `vX.Y.Z` (or `vX.Y.Z-rc.N`) runs
 [`.github/workflows/release.yml`](../.github/workflows/release.yml), which:
 
 1. checks the tag matches `version` in `app/src-tauri/tauri.conf.json`,
-2. creates a **draft** GitHub Release (a pre-release when the tag has a `-`),
-3. builds, signs and smoke-tests on `macos-14` (Apple Silicon) and
-   `windows-latest` (x64),
-4. uploads the installers and updater files, then `latest.json`.
+2. builds, signs and smoke-tests on `macos-14` (Apple Silicon) and
+   `windows-latest` (x64), with read-only repo access,
+3. in one separate `publish` job (the only one that can write), creates a
+   **draft** GitHub Release (a pre-release when the tag has a `-`) and
+   uploads the installers, updater files and `latest.json`.
 
 Nothing is public until a person publishes the draft.
 
@@ -26,10 +27,11 @@ pre-releases: those links (and the in-app updater) only see a published,
 non-pre-release version. To try a release candidate, use
 `.../releases/download/v0.9.0-rc.1/<asset>` instead.
 
-The same workflow also runs nightly on `main`, on demand, and on PRs that
-touch packaging. Those runs build and smoke-test with a throwaway macOS
-certificate and no updater key, and keep the installers as workflow
-artifacts. They never publish.
+The workflow can also be started by hand (**Actions → release → Run
+workflow**, once it is on `main`). A manual run builds and smoke-tests with a
+throwaway macOS certificate and no updater key, keeps the installers as
+workflow artifacts, and never publishes. Pull requests never trigger it, so
+the signing secrets never reach PR code.
 
 ## One-time setup: signing secrets
 

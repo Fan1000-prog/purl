@@ -1,25 +1,15 @@
 name: release
 # A version tag (v0.9.0, v0.9.0-rc.1) builds, signs and smoke-tests both
-# installers, uploads them to a draft GitHub Release, then adds latest.json
-# for the updater. Every other run (nightly on main, manual, or a PR that
-# touches packaging) does the same build and smoke test with a throwaway
-# macOS identity and no updater key, and keeps the installers as workflow
-# artifacts instead of publishing. See docs/RELEASING.md.
+# installers, then one publish job creates a draft GitHub Release with the
+# installers, updater files and latest.json. A manual run (workflow_dispatch)
+# does the same build and smoke test with a throwaway macOS identity and no
+# updater key, keeps the installers as workflow artifacts and never
+# publishes. Never triggered by pull requests: signing secrets must not reach
+# PR-controlled code. See docs/RELEASING.md.
 on:
   push:
     tags: ["v*"]
-  schedule:
-    - cron: "23 6 * * *"
   workflow_dispatch: {}
-  pull_request:
-    paths:
-      - .github/workflows/release.yml
-      - .github/actions/**
-      - scripts/**
-      - app/src-tauri/tauri*.conf.json
-      - app/src-tauri/build.rs
-      - app/src-tauri/src/main.rs
-      - app/src-tauri/src/smoke.rs
 
 permissions:
   contents: read
@@ -32,32 +22,7 @@ env:
   PUBLISH: ${{ startsWith(github.ref, 'refs/tags/v') }}
 
 jobs:
-  draft:
-    if: startsWith(github.ref, 'refs/tags/v')
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - uses: actions/checkout@v4
-      - name: Tag matches the app version
-        run: node scripts/release-assets.mjs check-tag "$GITHUB_REF_NAME"
-      - name: Create the draft release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            echo "release $GITHUB_REF_NAME already exists; reusing it"
-            exit 0
-          fi
-          pre=()
-          if [[ "$GITHUB_REF_NAME" == *-* ]]; then pre=(--prerelease); fi
-          gh release create "$GITHUB_REF_NAME" --draft "${pre[@]}" --verify-tag \
-            --title "Purl ${GITHUB_REF_NAME#v}" --generate-notes
-
   build:
-    needs: draft
-    # Runs when draft succeeded, or was skipped because this isn't a tag.
-    if: ${{ !cancelled() && needs.draft.result != 'failure' }}
     strategy:
       fail-fast: false
       matrix:
@@ -67,24 +32,25 @@ jobs:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
-    permissions:
-      contents: write
     defaults:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Tag matches the app version
+        if: env.PUBLISH == 'true'
+        run: node scripts/release-assets.mjs check-tag "$GITHUB_REF_NAME"
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
         with:
           targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           workspaces: app/src-tauri
           key: release-${{ matrix.target }}
       - name: ONNX Runtime (Windows)
         if: runner.os == 'Windows'
         uses: ./.github/actions/onnxruntime-windows
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: 22
 
@@ -196,27 +162,24 @@ jobs:
           for ($i = 0; $i -lt 30 -and (Test-Path $exe); $i++) { Start-Sleep 1 }
           if (Test-Path $exe) { throw "uninstall left $exe behind" }
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: purl-${{ matrix.target }}
           path: dist-release/
           if-no-files-found: error
 
-      - name: Upload to the draft release
-        if: env.PUBLISH == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$GITHUB_REF_NAME" dist-release/* --clobber
 
-  manifest:
+  # The only job that can write to the repo, and it runs no build code:
+  # it creates the draft release and uploads what the builds produced.
+  publish:
     needs: build
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: purl-*
           path: dist-release
@@ -224,8 +187,15 @@ jobs:
       - name: Write latest.json
         run: |
           node scripts/make-latest-json.mjs --tag "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
-            --dir dist-release --out latest.json
-      - name: Upload latest.json
+            --dir dist-release --out dist-release/latest.json
+      - name: Create the draft release and upload
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$GITHUB_REF_NAME" latest.json --clobber
+        run: |
+          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            pre=()
+            if [[ "$GITHUB_REF_NAME" == *-* ]]; then pre=(--prerelease); fi
+            gh release create "$GITHUB_REF_NAME" --draft "${pre[@]}" --verify-tag \
+              --title "Purl ${GITHUB_REF_NAME#v}" --generate-notes
+          fi
+          gh release upload "$GITHUB_REF_NAME" dist-release/* --clobber
