@@ -142,6 +142,28 @@ pub fn trailing_tag_start(s: &str, name: &str, closing: bool) -> Option<usize> {
         .find(|&start| is_exactly_tag(&s[start..], name, closing))
 }
 
+/// Fence untrusted text in a `name` block for a prompt: tags of that name
+/// inside it are defanged first, so it cannot close the block early.
+pub fn fence(s: &str, name: &str) -> String {
+    format!("<{name}>\n{}\n</{name}>", defang_tags(s, name))
+}
+
+/// Trim `text` and drop one `name` tag pair a model echoed around its
+/// answer, in any spacing, case or bracket lookalike. Tags elsewhere stay.
+pub fn strip_wrapping_tags(text: &str, name: &str) -> String {
+    let t = text.trim();
+    let start = leading_tag_len(t, name, false).unwrap_or(0);
+    let rest = &t[start..];
+    let end = trailing_tag_start(rest, name, true).unwrap_or(rest.len());
+    rest[..end].trim().to_string()
+}
+
+/// The first closing `name` tag in `s` as a byte range of the original text.
+pub fn find_closing_tag(s: &str, name: &str) -> Option<(usize, usize)> {
+    s.char_indices()
+        .find_map(|(i, _)| leading_tag_len(&s[i..], name, true).map(|len| (i, i + len)))
+}
+
 fn is_exactly_tag(s: &str, name: &str, closing: bool) -> bool {
     let n = normalize(s);
     matches!(find_tags(&n, name).as_slice(), [t] if t.start == 0 && t.end == n.len() && t.closing == closing)

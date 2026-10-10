@@ -167,8 +167,7 @@ pub(crate) fn system_prompt(transform_prompt: &str) -> String {
 // Used by the Smart transform call (plan Task 6); unused until then.
 #[allow(dead_code)]
 pub(crate) fn wrap_selection(selection: &str) -> String {
-    let inner = crate::untrusted::defang_tags(selection, "text");
-    format!("<text>\n{inner}\n</text>")
+    crate::untrusted::fence(selection, "text")
 }
 
 /// Models occasionally echo the delimiters back, in any spacing or case;
@@ -176,12 +175,7 @@ pub(crate) fn wrap_selection(selection: &str) -> String {
 // Used by the Smart transform call (plan Task 6); unused until then.
 #[allow(dead_code)]
 pub(crate) fn strip_text_tags(text: &str) -> String {
-    use crate::untrusted::{leading_tag_len, trailing_tag_start};
-    let t = text.trim();
-    let start = leading_tag_len(t, "text", false).unwrap_or(0);
-    let rest = &t[start..];
-    let end = trailing_tag_start(rest, "text", true).unwrap_or(rest.len());
-    rest[..end].trim().to_string()
+    crate::untrusted::strip_wrapping_tags(text, "text")
 }
 
 /// Run `text` through the transform's prompt on the Smart model. Until that

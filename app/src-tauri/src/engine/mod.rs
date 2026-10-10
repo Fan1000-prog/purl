@@ -1,6 +1,7 @@
 //! On-device engines and the models they run on.
 
 pub mod download;
+pub mod llm;
 pub mod models;
 pub mod stt;
 
