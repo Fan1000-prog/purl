@@ -655,6 +655,57 @@ pub(crate) mod tests {
         assert!(calls.load(Ordering::SeqCst) >= 3, "loading, ready, idle");
     }
 
+    /// Something else grabbed the port and says yes to everything: the
+    /// start is refused, and the dictation is cleaned with Fast instead.
+    #[cfg(unix)]
+    #[test]
+    fn a_squatter_on_the_port_falls_back_to_fast() {
+        use crate::engine::sidecar::Sidecar;
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for mut stream in listener.incoming().flatten() {
+                let _ = stream.read(&mut [0u8; 4096]);
+                let body =
+                    r#"{"choices":[{"finish_reason":"stop","message":{"content":"Pwned."}}]}"#;
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+            }
+        });
+        let engine = LlamaServerEngine::with_backend(
+            PathBuf::from("/m/qwen.gguf"),
+            Box::new(|_: &Path| true),
+            Box::new(move |_: &Path| {
+                let mut cmd = std::process::Command::new("sleep");
+                cmd.arg("30");
+                match Sidecar::start(cmd, port, Duration::from_secs(5), None) {
+                    Ok(_) => Err("the squatter was accepted".into()),
+                    Err(e) => Err(e.to_string()),
+                }
+            }),
+        );
+        let r = crate::cleanup::smart_clean(
+            &*engine,
+            "um hello there",
+            "",
+            crate::settings::StructureMode::None,
+            Duration::from_secs(10),
+            || "Hello there.".into(),
+        );
+        assert_eq!(r.text, "Hello there.");
+        assert!(!r.used_llm);
+        assert_eq!(r.note.as_deref(), Some("Smart cleanup failed, used Fast"));
+        assert!(
+            matches!(engine.status(), EngineState::Failed { reason } if reason.contains("another program")),
+            "{:?}",
+            engine.status()
+        );
+    }
+
     #[test]
     fn request_turns_thinking_off_and_bounds_output() {
         let body = request_body("sys", "hello");

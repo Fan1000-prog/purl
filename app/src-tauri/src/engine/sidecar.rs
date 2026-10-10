@@ -2,6 +2,12 @@
 //! 127.0.0.1 only, on a free port picked at spawn, and dies with the app:
 //! `Drop` kills it, a Job Object kills it on Windows if Purl itself dies,
 //! and on macOS a PID file lets the next launch reap a leftover.
+//!
+//! Another local program could grab the port between our pick and the
+//! server's bind and pose as it, reading transcripts and returning text we
+//! would paste. So a started server must prove itself: the listening socket
+//! belongs to our child, and it refuses a wrong API key, accepts ours and
+//! names our model.
 
 use std::ffi::OsString;
 use std::io;
@@ -65,16 +71,10 @@ pub fn free_port() -> io::Result<u16> {
 }
 
 /// A random API key for one server run, so other local processes (or a web
-/// page poking at localhost) can't use it. 128 bits from the std hasher's
-/// per-instance random seed.
+/// page poking at localhost) can't use it: 128 bits from the OS CSPRNG.
+/// Never logged, never put in an error.
 pub fn api_key() -> String {
-    use std::hash::{BuildHasher, Hasher};
-    let half = || {
-        std::collections::hash_map::RandomState::new()
-            .build_hasher()
-            .finish()
-    };
-    format!("{:016x}{:016x}", half(), half())
+    crate::secure_random::hex(16)
 }
 
 pub struct Sidecar {
@@ -86,9 +86,10 @@ pub struct Sidecar {
 }
 
 impl Sidecar {
-    /// Spawn `llama-server` for `model` on a free loopback port and wait
-    /// until it is healthy. The API key is passed in the environment, not on
-    /// the command line, so it doesn't show in a process list.
+    /// Spawn `llama-server` for `model` on a free loopback port, wait until
+    /// it is healthy, and check it is really ours (see `verify_identity`).
+    /// The API key is passed in the environment, not on the command line, so
+    /// it doesn't show in a process list.
     pub fn spawn_llama(
         bin: &Path,
         model: &Path,
@@ -99,11 +100,14 @@ impl Sidecar {
         let mut cmd = Command::new(bin);
         cmd.args(llama_args(model, port))
             .env("LLAMA_API_KEY", api_key);
-        Self::start(cmd, port, HEALTH_TIMEOUT, pid_file)
+        let sidecar = Self::start(cmd, port, HEALTH_TIMEOUT, pid_file)?;
+        verify_identity(port, api_key, model)?;
+        Ok(sidecar)
     }
 
-    /// Start `cmd` (which must serve `GET /health` on `port`) and wait up to
-    /// `health_timeout` for a 200. The child is killed on any failure.
+    /// Start `cmd` (which must serve `GET /health` on `port`), wait up to
+    /// `health_timeout` for a 200, then check the child itself is the one
+    /// listening. The child is killed on any failure.
     pub fn start(
         mut cmd: Command,
         port: u16,
@@ -136,6 +140,7 @@ impl Sidecar {
             std::fs::write(path, sidecar.child.id().to_string())?;
         }
         sidecar.wait_healthy(health_timeout)?;
+        sidecar.verify_owner()?;
         Ok(sidecar)
     }
 
@@ -150,6 +155,19 @@ impl Sidecar {
     /// False once the process has exited.
     pub fn is_alive(&mut self) -> bool {
         matches!(self.child.try_wait(), Ok(None))
+    }
+
+    /// Every socket listening on our port belongs to our child, which is
+    /// still running. Fails closed when the owner can't be read.
+    fn verify_owner(&mut self) -> io::Result<()> {
+        let pids = listener_pids(self.port)?;
+        if !self.is_alive() || pids.is_empty() || pids.iter().any(|&p| p != self.pid()) {
+            return Err(io::Error::other(format!(
+                "port {} is held by another program, not {SERVER_NAME}",
+                self.port
+            )));
+        }
+        Ok(())
     }
 
     fn wait_healthy(&mut self, timeout: Duration) -> io::Result<()> {
@@ -188,6 +206,119 @@ impl Drop for Sidecar {
             let _ = std::fs::remove_file(path);
         }
     }
+}
+
+/// Check the server on `port` is llama-server holding `api_key` and serving
+/// `model`: a random wrong key gets 401, ours gets 200 from the key-guarded
+/// `/props`, which names the model. Errors never contain either key.
+pub fn verify_identity(port: u16, api_key: &str, model: &Path) -> io::Result<()> {
+    let client = loopback_client(Duration::from_secs(5))?;
+    let url = format!("http://127.0.0.1:{port}/props");
+    let not_ours = |why: &str| {
+        io::Error::other(format!(
+            "the server on port {port} isn't Purl's {SERVER_NAME}: {why}"
+        ))
+    };
+    let props = |key: &str| {
+        client
+            .get(&url)
+            .bearer_auth(key)
+            .send()
+            .map_err(|e| not_ours(&format!("no answer ({})", e.without_url())))
+    };
+    let wrong = props(&crate::secure_random::hex(16))?;
+    if wrong.status() != reqwest::StatusCode::UNAUTHORIZED {
+        return Err(not_ours(&format!(
+            "it accepted a wrong key ({})",
+            wrong.status()
+        )));
+    }
+    let right = props(api_key)?;
+    if !right.status().is_success() {
+        return Err(not_ours(&format!(
+            "it refused our key ({})",
+            right.status()
+        )));
+    }
+    let body: serde_json::Value = right
+        .json()
+        .map_err(|_| not_ours("its /props isn't JSON"))?;
+    if body["model_path"].as_str() != Some(&*model.to_string_lossy()) {
+        return Err(not_ours("it serves a different model"));
+    }
+    Ok(())
+}
+
+/// PIDs of the processes listening on 127.0.0.1:`port`, via `lsof`.
+#[cfg(unix)]
+fn listener_pids(port: u16) -> io::Result<Vec<u32>> {
+    // Absolute path on macOS so a PATH entry can't stand in for it.
+    let lsof = if Path::new("/usr/sbin/lsof").exists() {
+        "/usr/sbin/lsof"
+    } else {
+        "lsof"
+    };
+    let out = Command::new(lsof)
+        .args([
+            "-nP",
+            &format!("-iTCP@127.0.0.1:{port}"),
+            "-sTCP:LISTEN",
+            "-t",
+        ])
+        .stderr(Stdio::null())
+        .output()?;
+    Ok(String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter_map(|l| l.trim().parse().ok())
+        .collect())
+}
+
+/// PIDs of the processes listening on 127.0.0.1:`port`, from the IPv4 TCP
+/// table.
+#[cfg(windows)]
+fn listener_pids(port: u16) -> io::Result<Vec<u32>> {
+    use windows::Win32::NetworkManagement::IpHelper::{
+        GetExtendedTcpTable, MIB_TCPTABLE_OWNER_PID, TCP_TABLE_OWNER_PID_LISTENER,
+    };
+    use windows::Win32::Networking::WinSock::AF_INET;
+    const ERROR_INSUFFICIENT_BUFFER: u32 = 122;
+    const LOOPBACK: u32 = u32::from_ne_bytes([127, 0, 0, 1]);
+    // The table can grow between the size query and the read; retry.
+    let mut size = 0u32;
+    for _ in 0..4 {
+        // u32 words keep the buffer aligned for the table's u32 fields.
+        let mut buf = vec![0u32; (size as usize).div_ceil(4).max(1)];
+        let rc = unsafe {
+            GetExtendedTcpTable(
+                Some(buf.as_mut_ptr().cast()),
+                &mut size,
+                false,
+                AF_INET.0 as u32,
+                TCP_TABLE_OWNER_PID_LISTENER,
+                0,
+            )
+        };
+        if rc == ERROR_INSUFFICIENT_BUFFER {
+            continue;
+        }
+        if rc != 0 {
+            return Err(io::Error::other(format!(
+                "couldn't read the TCP table ({rc})"
+            )));
+        }
+        let table = unsafe { &*(buf.as_ptr() as *const MIB_TCPTABLE_OWNER_PID) };
+        let rows = unsafe {
+            std::slice::from_raw_parts(table.table.as_ptr(), table.dwNumEntries as usize)
+        };
+        return Ok(rows
+            .iter()
+            // The port is in network byte order in the low 16 bits.
+            .filter(|r| u16::from_be(r.dwLocalPort as u16) == port)
+            .filter(|r| r.dwLocalAddr == LOOPBACK || r.dwLocalAddr == 0)
+            .map(|r| r.dwOwningPid)
+            .collect());
+    }
+    Err(io::Error::other("the TCP table kept changing"))
 }
 
 /// An HTTP client for the loopback server: never through a proxy, and every
@@ -324,9 +455,10 @@ mod tests {
     }
 
     #[test]
-    fn api_keys_differ() {
+    fn api_keys_are_128_random_bits() {
         let (a, b) = (api_key(), api_key());
         assert_eq!(a.len(), 32);
+        assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
         assert_ne!(a, b);
     }
 
@@ -373,34 +505,107 @@ mod tests {
         assert!(!pid_file.exists(), "drop removes the PID file");
     }
 
-    /// A loopback HTTP server that answers every request 200, standing in
-    /// for a healthy llama-server. Serves until the listener is dropped.
-    #[cfg(unix)]
-    fn healthy_port() -> (TcpListener, u16) {
+    /// A loopback HTTP server inside this test process. `answer` gets the
+    /// request head and returns (status, body). Serves until the process ends.
+    fn fake_server(answer: fn(&str) -> (u16, String)) -> u16 {
         use std::io::{Read, Write};
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
-        let accept = listener.try_clone().unwrap();
         std::thread::spawn(move || {
-            for mut stream in accept.incoming().flatten() {
-                let mut buf = [0u8; 1024];
-                let _ = stream.read(&mut buf);
-                let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok");
+            for mut stream in listener.incoming().flatten() {
+                let mut buf = [0u8; 4096];
+                let n = stream.read(&mut buf).unwrap_or(0);
+                let (status, body) = answer(&String::from_utf8_lossy(&buf[..n]));
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 {status} X\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
             }
         });
-        (listener, port)
+        port
+    }
+
+    /// A squatter: says yes to everything, as if it were llama-server.
+    fn squatter() -> u16 {
+        fake_server(|_| (200, r#"{"model_path":"/m/q.gguf"}"#.into()))
+    }
+
+    const KEY: &str = "0123456789abcdef0123456789abcdef";
+
+    /// Behaves like llama-server with API key `KEY` serving `/m/q.gguf`.
+    fn honest_server() -> u16 {
+        fake_server(|req| {
+            if req.contains(&format!("Authorization: Bearer {KEY}"))
+                || req.contains(&format!("authorization: Bearer {KEY}"))
+            {
+                (200, r#"{"model_path":"/m/q.gguf"}"#.into())
+            } else {
+                (401, r#"{"error":"Invalid API Key"}"#.into())
+            }
+        })
     }
 
     #[cfg(unix)]
     #[test]
-    fn healthy_sidecar_writes_pid_and_dies_on_drop() {
+    fn a_squatter_on_the_port_is_rejected() {
         let dir = tempfile::tempdir().unwrap();
         let pid_file = dir.path().join("llama.pid");
-        let (_server, port) = healthy_port();
+        let port = squatter();
         let mut cmd = Command::new("sleep");
         cmd.arg("30");
+        let err = Sidecar::start(cmd, port, Duration::from_secs(5), Some(&pid_file))
+            .err()
+            .expect("a port held by another process must not pass");
+        assert!(err.to_string().contains("another program"), "{err}");
+        assert!(!pid_file.exists(), "the child was cleaned up");
+    }
+
+    #[test]
+    fn identity_needs_the_key_and_our_model() {
+        let model = Path::new("/m/q.gguf");
+        verify_identity(honest_server(), KEY, model).unwrap();
+        // Says yes without the key: not llama-server with our key.
+        assert!(verify_identity(squatter(), KEY, model).is_err());
+        // Right key handling, wrong model.
+        assert!(verify_identity(honest_server(), KEY, Path::new("/m/other.gguf")).is_err());
+        // Wrong key altogether.
+        assert!(verify_identity(honest_server(), &"f".repeat(32), model).is_err());
+    }
+
+    #[test]
+    fn the_key_never_shows_in_errors() {
+        let model = Path::new("/m/q.gguf");
+        for port in [squatter(), honest_server(), free_port().unwrap()] {
+            if let Err(e) = verify_identity(port, &"e".repeat(32), model) {
+                assert!(!e.to_string().contains(&"e".repeat(32)), "{e}");
+            }
+        }
+        let err = verify_identity(squatter(), KEY, model).unwrap_err();
+        assert!(!err.to_string().contains(KEY), "{err}");
+    }
+
+    /// A child that really owns its port passes, and dies with its Sidecar.
+    /// Uses python3 as a stand-in HTTP server.
+    #[cfg(unix)]
+    #[test]
+    fn a_child_that_owns_the_port_is_accepted_and_dies_on_drop() {
+        let dir = tempfile::tempdir().unwrap();
+        let pid_file = dir.path().join("llama.pid");
+        let port = free_port().unwrap();
+        let mut cmd = Command::new("python3");
+        cmd.args([
+            "-I",
+            "-c",
+            "import http.server as h, sys\n\
+             class H(h.BaseHTTPRequestHandler):\n \
+              def do_GET(s): s.send_response(200); s.end_headers(); s.wfile.write(b'ok')\n \
+              def log_message(s, *a): pass\n\
+             h.HTTPServer(('127.0.0.1', int(sys.argv[1])), H).serve_forever()",
+            &port.to_string(),
+        ]);
         let mut sidecar =
-            Sidecar::start(cmd, port, Duration::from_secs(5), Some(&pid_file)).unwrap();
+            Sidecar::start(cmd, port, Duration::from_secs(10), Some(&pid_file)).unwrap();
         let pid = sidecar.pid();
         assert!(sidecar.is_alive());
         assert_eq!(std::fs::read_to_string(&pid_file).unwrap(), pid.to_string());
