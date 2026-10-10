@@ -853,4 +853,59 @@ mod tests {
         }
         llm.shutdown();
     }
+
+    /// Cleanup quality and warm latency on the real 2B model: five
+    /// dictations, three runs each. Prints a summary; asserts nothing.
+    #[test]
+    #[ignore = "needs llama-server and the 1.4 GB Qwen3.5-2B model; run: cargo test -- --ignored smart_real_bench --nocapture"]
+    fn smart_real_bench() {
+        let llm = crate::engine::llm::tests::real_engine();
+        llm.warm();
+        while llm.status() == EngineState::Loading {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let inputs = [
+            "um so i think we should uh move the meeting to thursday",
+            "hey pearl can you uh send the notes to the team in google chat",
+            "so like the report are ready and we has sent it to the client yesterday",
+            "what time is the standup tomorrow",
+            "okay um i'll be there in like ten minutes you know",
+        ];
+        let (mut clean, mut runs, mut times) = (0, 0, Vec::new());
+        for (i, raw) in inputs.iter().cycle().take(inputs.len() * 3).enumerate() {
+            let t = std::time::Instant::now();
+            let r = smart_clean(
+                &*llm,
+                raw,
+                "- Purl",
+                StructureMode::None,
+                Duration::from_secs(6),
+                || "FAST".into(),
+            );
+            let took = t.elapsed();
+            if i > 0 {
+                times.push(took.as_millis());
+            }
+            let words = format!(" {} ", r.text.to_lowercase());
+            let ok = r.used_llm
+                && !words.contains(" um ")
+                && !words.contains(" uh ")
+                && r.text.chars().next().is_some_and(char::is_uppercase);
+            clean += ok as usize;
+            runs += 1;
+            eprintln!(
+                "{:>5}ms {} {:?}",
+                took.as_millis(),
+                if ok { "ok " } else { "BAD" },
+                r.text
+            );
+        }
+        times.sort();
+        eprintln!(
+            "clean {clean}/{runs}; warm median {}ms, p90 {}ms",
+            times[times.len() / 2],
+            times[times.len() * 9 / 10]
+        );
+        llm.shutdown();
+    }
 }
