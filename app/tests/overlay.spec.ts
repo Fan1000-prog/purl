@@ -100,3 +100,16 @@ test("reduced motion: static pose in the overlay", async ({ page }) => {
   await emit(page, "state", "recording");
   await expect(page.locator("#mascot-slot img")).toHaveAttribute("src", /purl-pose-listening\.png$/);
 });
+
+test("the hit rect Rust gets is exactly the pill, idle and recording", async ({ page }) => {
+  await open(page);
+  for (const state of ["idle", "recording"]) {
+    await emit(page, "state", state);
+    await page.waitForTimeout(50);
+    const box = (await page.locator("#pill").boundingBox())!;
+    const rect = await page.evaluate(
+      () => (window as any).__invoked.filter((c: any) => c.cmd === "set_overlay_hit_rect").at(-1).args.rect,
+    );
+    expect(rect, state).toEqual([box.x, box.y, box.width, box.height]);
+  }
+});

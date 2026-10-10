@@ -26,8 +26,8 @@ function remember() {
 }
 
 export async function showSmartOffer() {
-  const home = document.getElementById("view-home");
-  if (!home || dismissed() || document.getElementById("smart-offer")) return;
+  const slot = document.getElementById("home-offer");
+  if (!slot || dismissed() || document.getElementById("smart-offer")) return;
   const models = await invoke<ModelView[]>("models_status").catch(() => []);
   if (models.find((m) => m.id === SMART_MODEL)?.state === "ready") return;
 
@@ -51,11 +51,11 @@ export async function showSmartOffer() {
   text.textContent =
     "Smart cleanup adds a small language model that fixes grammar and phrasing, on your computer. It's optional, and Fast cleanup works without it.";
 
-  const slot = document.createElement("div");
-  card.append(close, title, text, slot);
-  home.prepend(card);
+  const downloadSlot = document.createElement("div");
+  card.append(close, title, text, downloadSlot);
+  slot.append(card);
 
-  const download = mountModelDownload(slot, {
+  const download = mountModelDownload(downloadSlot, {
     id: SMART_MODEL,
     title: "Smart cleanup",
     detail: "optional",
