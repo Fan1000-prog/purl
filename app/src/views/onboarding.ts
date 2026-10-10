@@ -15,9 +15,6 @@ const $ = <T extends HTMLElement>(id: string): T =>
 
 interface StatusPayload {
   stt: EngineState;
-  ollama_up: boolean;
-  ollama_model_found: boolean;
-  ollama_model: string;
   accessibility_trusted: boolean;
   hotkey: string;
   state: string;
@@ -71,7 +68,7 @@ function renderWelcome(body: HTMLElement) {
   );
   body.appendChild(
     el("p", "",
-      "Two things worth knowing up front. Cleanup can be pointed at Gemini or Claude with your own API key, and then your transcript text — never your audio — goes to them. And after each paste, Purl reads that text field for 30 seconds to catch words you fix by hand, so it can spell them right next time. Fields macOS marks as secure text — password fields — are never read, and both are switches you control in Settings."),
+      "One thing worth knowing up front. After each paste, Purl reads that text field for 30 seconds to catch words you fix by hand, so it can spell them right next time. Fields macOS marks as secure text — password fields — are never read, and it's a switch you control in Settings."),
   );
 }
 
@@ -110,14 +107,6 @@ async function renderChecks(body: HTMLElement) {
     try {
       const s = await invoke<StatusPayload>("get_status");
       const items = [check(...(await speechRow(s.stt)))];
-      if (getSettings()?.cleanup_mode === "ai") {
-        items.push(
-          check(s.ollama_up, "Ollama running",
-            "Open the Ollama app, or run: ollama serve"),
-          check(s.ollama_model_found, `AI cleanup model (${s.ollama_model})`,
-            `One-time download: ollama pull ${s.ollama_model}`),
-        );
-      }
       items.push(
         check(s.accessibility_trusted,
           "Accessibility permission — lets it type for you, and read the field it typed into",
@@ -125,7 +114,7 @@ async function renderChecks(body: HTMLElement) {
       );
       ul.replaceChildren(...items);
       note.textContent = "";
-      // The speech model gates Continue; Accessibility and Ollama are deferrable.
+      // The speech model gates Continue; Accessibility is deferrable.
       $<HTMLButtonElement>("wiz-next").disabled =
         !["ready", "idle", "loading"].includes(s.stt.state);
     } catch {

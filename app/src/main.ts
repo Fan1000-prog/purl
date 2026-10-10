@@ -10,26 +10,20 @@ import { initOnboarding } from "./views/onboarding";
 import { initFieldNotice } from "./views/field-notice";
 import { initUpdates } from "./views/updates";
 import { createHotkeyRecorder, HOTKEY_RECORDER_CANCEL } from "./views/hotkey-recorder";
-import { initModelPicker } from "./views/model-picker";
 import { celebrate } from "./celebrate";
-import { makeToken, providerLabel, splitToken } from "./engine-token";
-import type { EngineState } from "./types";
+import type { CleanupMode, EngineState } from "./types";
 
 export interface Settings {
   hotkey: string;
-  ollama_model: string;
-  ai_engine: "local" | "claude" | "gemini";
-  claude_model: string;
-  gemini_model: string;
   inject_mode: "paste" | "clipboard_only";
-  cleanup_mode: "fast" | "ai" | "off";
+  cleanup_mode: CleanupMode;
+  smart_model: string;
   structure_mode: "none" | "email" | "coding";
   command_detection: boolean;
   learn_corrections: boolean;
   onboarding_complete: boolean;
   field_reading_disclosed: boolean;
   last_seen_version: string;
-  model_migrated: boolean;
 }
 
 let currentSettings: Settings | null = null;
@@ -97,10 +91,6 @@ export interface TranscriptPayload {
 
 interface StatusPayload {
   stt: EngineState;
-  ollama_up: boolean;
-  ollama_model_found: boolean;
-  ollama_model: string;
-  ai_engine: "local" | "claude" | "gemini";
   accessibility_trusted: boolean;
   hotkey: string;
   state: string;
@@ -199,27 +189,6 @@ async function refreshStatus() {
   const list = $<HTMLUListElement>("check-items");
   list.replaceChildren(
     checkItem(...speechCheck(s.stt)),
-    // Green for cloud engines so a working setup shows no false alarm — but the
-    // label must still be true. Ollama is the fallback rung on every cloud
-    // failure, so if it is down we say so rather than claiming it is running.
-    checkItem(
-      s.ollama_up || s.ai_engine !== "local",
-      s.ai_engine === "local"
-        ? "Ollama running (only needed for AI cleanup)"
-        : s.ollama_up
-          ? `Ollama running (fallback for ${providerLabel(s.ai_engine)} cleanup)`
-          : `Ollama not running — no local fallback if ${providerLabel(s.ai_engine)} fails`,
-      "Open the Ollama app, or run: ollama serve",
-    ),
-    checkItem(
-      s.ollama_model_found || s.ai_engine !== "local",
-      s.ai_engine === "local"
-        ? `AI cleanup model (${s.ollama_model})`
-        : s.ollama_model_found
-          ? `Local fallback model (${s.ollama_model})`
-          : `Local fallback model missing (${s.ollama_model})`,
-      `One-time download: ollama pull ${s.ollama_model}`,
-    ),
     checkItem(
       s.accessibility_trusted,
       "Accessibility permission — lets it type for you, and read the field it typed into",
@@ -231,32 +200,8 @@ async function refreshStatus() {
 async function loadSettings(): Promise<Settings> {
   const s = await invoke<Settings>("get_settings");
   currentSettings = s;
-  const modelSelect = $<HTMLSelectElement>("cleanup-model");
-  const token = makeToken(
-    s.ai_engine,
-    s.ai_engine === "local"
-      ? s.ollama_model
-      : s.ai_engine === "claude"
-        ? s.claude_model
-        : s.gemini_model,
-  );
-  // An id not in the picker — a hand-edited settings.json, or a model this
-  // release dropped — becomes a real option rather than being snapped to a
-  // default. Cloud ids are validated permissively precisely so a user can
-  // point at a newer id than this build ships; silently selecting something
-  // else would mean that merely opening Settings and pressing Save discards
-  // their engine and their local model choice with no warning. Surfacing it
-  // keeps the save path a faithful round-trip.
-  const known = [...modelSelect.options].some((o) => o.value === token);
-  if (!known) {
-    const opt = document.createElement("option");
-    opt.value = token;
-    const shown = splitToken(token).model;
-    opt.textContent = `${shown} (${s.ai_engine === "local" ? "local" : "cloud"}, from settings.json)`;
-    modelSelect.appendChild(opt);
-  }
-  modelSelect.value = token;
   $<HTMLSelectElement>("cleanup-mode").value = s.cleanup_mode;
+  $<HTMLSelectElement>("smart-model").value = s.smart_model;
   $<HTMLSelectElement>("inject-mode").value = s.inject_mode;
   $<HTMLSelectElement>("structure-mode").value = s.structure_mode;
   $<HTMLInputElement>("command-detection").checked = s.command_detection;
@@ -297,10 +242,6 @@ window.addEventListener("DOMContentLoaded", () => {
       );
       initOnboarding();
       initFieldNotice();
-      initModelPicker(
-        $<HTMLSelectElement>("cleanup-model"),
-        $<HTMLElement>("cleanup-model-status"),
-      );
     })
     .catch(showSettingsUnavailable);
   void loadGlossary();
@@ -324,7 +265,7 @@ window.addEventListener("DOMContentLoaded", () => {
   initUpdates();
   initLearning();
 
-  // Permissions/Ollama can change outside the app; poll cheaply.
+  // Permissions can change outside the app; poll cheaply.
   setInterval(() => void refreshStatus(), 5000);
 
   void listen<string>("state", (e) => setState(e.payload));
@@ -335,8 +276,8 @@ window.addEventListener("DOMContentLoaded", () => {
     // Same celebration snippets and transforms get. `result` only fires on a
     // successful run — an empty transcript or a pipeline failure goes out as
     // `pipeline-error` instead — so this cannot fire on a failed dictation.
-    // Deliberately not conditioned on `used_llm`: falling back to the local
-    // model, or to the raw transcript, still delivered the user's words.
+    // Deliberately not conditioned on `used_llm`: falling back to Fast
+    // cleanup still delivered the user's words.
     celebrate("Your words are ready.");
   });
   void listen<string>("pipeline-error", (e) => {
@@ -351,32 +292,14 @@ window.addEventListener("DOMContentLoaded", () => {
   $<HTMLFormElement>("settings-form").addEventListener("submit", (e) => {
     e.preventDefault();
     const msg = $<HTMLSpanElement>("settings-msg");
-    // Per-engine fields: writing only the selected engine's model preserves
-    // the others, so switching back restores the previous choice.
-    const selected = splitToken($<HTMLSelectElement>("cleanup-model").value);
     const newSettings: Settings = {
       // The recorder owns the hotkey via set_hotkey; pass through unchanged.
       hotkey: currentSettings?.hotkey ?? "CmdOrCtrl+Shift+Space",
-      ollama_model:
-        selected.engine === "local"
-          ? selected.model
-          : (currentSettings?.ollama_model ?? "qwen2.5:3b"),
-      ai_engine: selected.engine,
-      claude_model:
-        selected.engine === "claude"
-          ? selected.model
-          : (currentSettings?.claude_model ?? "claude-haiku-4-5-20251001"),
-      gemini_model:
-        selected.engine === "gemini"
-          ? selected.model
-          : (currentSettings?.gemini_model ?? "gemini-3.5-flash-lite"),
       inject_mode: $<HTMLSelectElement>("inject-mode").value as
         | "paste"
         | "clipboard_only",
-      cleanup_mode: $<HTMLSelectElement>("cleanup-mode").value as
-        | "fast"
-        | "ai"
-        | "off",
+      cleanup_mode: $<HTMLSelectElement>("cleanup-mode").value as CleanupMode,
+      smart_model: $<HTMLSelectElement>("smart-model").value,
       structure_mode: $<HTMLSelectElement>("structure-mode").value as
         | "none"
         | "email"
@@ -386,7 +309,6 @@ window.addEventListener("DOMContentLoaded", () => {
       onboarding_complete: currentSettings?.onboarding_complete ?? false,
       field_reading_disclosed: currentSettings?.field_reading_disclosed ?? false,
       last_seen_version: currentSettings?.last_seen_version ?? "",
-      model_migrated: currentSettings?.model_migrated ?? true,
     };
     invoke("save_settings", { newSettings })
       .then(() => {

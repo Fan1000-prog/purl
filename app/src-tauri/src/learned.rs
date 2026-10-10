@@ -287,8 +287,10 @@ fn replace_phrase(first: &str, last: &str, to: &str) -> String {
     format!("{lead}{to}{trail}")
 }
 
-/// Corrected words, for the Whisper and local-LLM prompts. Never the cloud
-/// prompt — see the privacy contract in the design doc.
+/// Corrected words, for the Smart cleanup prompt (plan Task 6; unused until
+/// then). They are text read from other apps' fields, so the prompt treats
+/// them as data — see `cleanup::build_system_prompt`.
+#[allow(dead_code)]
 pub fn glossary_terms(rules: &[Rule]) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
     for r in rules {

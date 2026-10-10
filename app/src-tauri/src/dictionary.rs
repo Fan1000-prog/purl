@@ -55,6 +55,8 @@ impl Dictionary {
     }
 
     /// Newline list with expansions, for the LLM cleanup system prompt.
+    // Smart cleanup (plan Task 6) is the caller; unused until then.
+    #[allow(dead_code)]
     pub fn llm_terms(&self) -> String {
         self.entries
             .iter()
@@ -67,12 +69,8 @@ impl Dictionary {
     }
 
     /// A copy with extra terms **prepended**, skipping ones already present.
-    /// Used for learned corrections, which bias the local LLM but are
-    /// deliberately kept out of cloud prompts.
-    ///
-    /// Prepended so learned terms lead the list. Both the prewarm and the
-    /// real cleanup call build the dictionary the same way, so the Ollama
-    /// KV-cache prefix stays identical.
+    /// Used to add learned corrections to the Smart cleanup prompt.
+    #[allow(dead_code)]
     pub fn with_extra_terms(&self, terms: &[String]) -> Dictionary {
         let mut entries: Vec<Entry> = Vec::with_capacity(self.entries.len() + terms.len());
         for t in terms {
@@ -151,7 +149,7 @@ mod tests {
         assert_eq!(d2.entries.len(), 2);
         assert_eq!(d2.entries[0].term, "Fan");
         assert_eq!(d2.entries[1].term, "SKU");
-        // The original is untouched — the cloud path keeps using it.
+        // The original is untouched.
         assert_eq!(d.entries.len(), 1);
     }
 }
