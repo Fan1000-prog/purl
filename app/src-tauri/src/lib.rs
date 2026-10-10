@@ -11,6 +11,7 @@ mod learned;
 mod overlay_pos;
 mod platform;
 mod settings;
+pub mod smoke;
 mod snippets;
 mod stats;
 mod structure;
