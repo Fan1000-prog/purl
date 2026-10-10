@@ -1798,7 +1798,8 @@ pub fn run() {
             let quit_item = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&toggle_item, &show_item, &quit_item])?;
             TrayIconBuilder::with_id("main")
-                .icon(app.default_window_icon().unwrap().clone())
+                // Bead-only mark: the full icon's sound arc blurs at menu-bar size.
+                .icon(tauri::include_image!("icons/tray.png"))
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "toggle" => toggle_dictation(app),

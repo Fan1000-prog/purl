@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="Purl — done"><title>Purl mascot — done</title><style>
+.a{transform-box:fill-box;}
+.body{transform-origin:30% 100%;}
+.eye{transform-origin:50% 50%;}
+.shadow{transform-origin:50% 50%;}
+.mouth{transform-origin:50% 50%;}
+
+.body{animation:hop 2.4s cubic-bezier(.4,0,.3,1) infinite;}
+@keyframes hop{0%{transform:translateY(0) scale(1,1)}12%{transform:translateY(0) scale(1.07,.9)}
+ 22%{transform:translateY(-34px) scale(.96,1.05)}34%{transform:translateY(-52px) scale(1,1)}
+ 48%{transform:translateY(0) scale(1.08,.9)}58%{transform:translateY(0) scale(.98,1.02)}66%,100%{transform:translateY(0) scale(1,1)}}
+.shadow{animation:hs 2.4s cubic-bezier(.4,0,.3,1) infinite;}
+@keyframes hs{0%,12%,48%,100%{transform:scaleX(1);opacity:.09}34%{transform:scaleX(.7);opacity:.05}}
+.s0,.s1,.s2,.s3{transform-origin:50% 50%;animation:spark 2.4s ease-out infinite;transform:scale(0)}
+.s1{animation-delay:.12s}.s2{animation-delay:.22s}.s3{animation-delay:.08s}
+@keyframes spark{0%,22%{transform:scale(0) rotate(0)}38%{transform:scale(1.15) rotate(25deg)}55%{transform:scale(.9) rotate(45deg)}72%,100%{transform:scale(0) rotate(70deg)}}
+.check{transform-origin:50% 50%;animation:chk 2.4s cubic-bezier(.3,1.6,.5,1) infinite;}
+@keyframes chk{0%,30%{transform:scale(0);opacity:1}42%{transform:scale(1);opacity:1}88%{transform:scale(1);opacity:1}100%{transform:scale(.6);opacity:0}}
+</style><rect width="512" height="512" fill="#F7F1E8"/><g transform="translate(-30,-12)"><ellipse class="a shadow" cx="250" cy="468" rx="92" ry="11" fill="#1F1A17" opacity="0.09"/><g class="a body"><circle cx="289.75" cy="225.5" r="112" fill="#FCF8F1"/><path d="M178 426 V218 A112 112 0 1 1 237.39 324.52" fill="none" stroke="#3F6B4B" stroke-width="50" stroke-linecap="round" stroke-linejoin="round"/><g class="a face"><ellipse cx="246" cy="236" rx="13" ry="7.5" fill="#F1D3BF"/><ellipse cx="334" cy="236" rx="13" ry="7.5" fill="#F1D3BF"/><g class="a eyes" fill="none" stroke="#1F1A17" stroke-width="8" stroke-linecap="round"><path d="M254 210 Q266 194 278 210"/><path d="M302 210 Q314 194 326 210"/></g><path class="a mouth" d="M274 236 Q290 238 306 236 Q304 260 290 260 Q276 260 274 236Z" fill="#C0683F" stroke="#C0683F" stroke-width="4" stroke-linejoin="round"/></g></g><path class="a s0" d="M430 78 Q437.28 96.72 456 104 Q437.28 111.28 430 130 Q422.72 111.28 404 104 Q422.72 96.72 430 78Z" fill="#C0683F"/><path class="a s1" d="M462 153 Q466.2 163.8 477 168 Q466.2 172.2 462 183 Q457.8 172.2 447 168 Q457.8 163.8 462 153Z" fill="#F3D36B"/><path class="a s2" d="M398 45 Q401.64 54.36 411 58 Q401.64 61.64 398 71 Q394.36 61.64 385 58 Q394.36 54.36 398 45Z" fill="#C0683F"/><path class="a s3" d="M150 104 Q154.48 115.52 166 120 Q154.48 124.48 150 136 Q145.52 124.48 134 120 Q145.52 115.52 150 104Z" fill="#F3D36B"/><g class="a check"><circle cx="452" cy="304" r="26" fill="#3F6B4B"/><path d="M440 304 L449 313 L465 295" fill="none" stroke="#F7F1E8" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/></g></g></svg>
