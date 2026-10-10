@@ -77,3 +77,28 @@ impl TextInjector for WindowsInjector {
         Trust::NotRequired
     }
 }
+
+/// The `Value` of the user's microphone consent store ("Allow" / "Deny"),
+/// or None when the key is missing or unreadable.
+pub fn mic_consent_value() -> Option<String> {
+    use windows::core::w;
+    use windows::Win32::System::Registry::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_SZ};
+
+    let mut buf = [0u16; 64];
+    let mut len = std::mem::size_of_val(&buf) as u32;
+    let rc = unsafe {
+        RegGetValueW(
+            HKEY_CURRENT_USER,
+            w!("Software\\Microsoft\\Windows\\CurrentVersion\\CapabilityAccessManager\\ConsentStore\\microphone"),
+            w!("Value"),
+            RRF_RT_REG_SZ,
+            None,
+            Some(buf.as_mut_ptr().cast()),
+            Some(&mut len),
+        )
+    };
+    rc.ok().ok()?;
+    // `len` is in bytes and includes the terminating NUL.
+    let chars = (len as usize / 2).saturating_sub(1);
+    Some(String::from_utf16_lossy(&buf[..chars]))
+}

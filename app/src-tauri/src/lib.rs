@@ -1325,6 +1325,13 @@ fn get_status(app: AppHandle, state: tauri::State<AppState>) -> StatusPayload {
     }
 }
 
+/// Microphone permission: `granted`, `denied`, or `not_required` (macOS
+/// hasn't asked yet; it will on the first dictation).
+#[tauri::command]
+fn mic_status() -> platform::Trust {
+    platform::mic_status()
+}
+
 #[tauri::command]
 fn get_last_result(state: tauri::State<AppState>) -> Option<TranscriptPayload> {
     state.last_result.lock().unwrap().clone()
@@ -1441,6 +1448,7 @@ pub fn run() {
             suspend_hotkey,
             resume_hotkey,
             get_status,
+            mic_status,
             get_last_result,
             toggle_recording,
             cancel_dictation,

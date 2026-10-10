@@ -127,3 +127,34 @@ fn send_keystroke(keycode: u16, with_command: bool) -> Result<(), InjectError> {
     up.post(CGEventTapLocation::HID);
     Ok(())
 }
+
+/// `[AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio]` as
+/// its raw `AVAuthorizationStatus` (0 notDetermined, 1 restricted, 2 denied,
+/// 3 authorized). Reading it never prompts.
+pub fn mic_authorization_status() -> isize {
+    use std::ffi::{c_char, c_void};
+
+    #[link(name = "AVFoundation", kind = "framework")]
+    extern "C" {
+        static AVMediaTypeAudio: *const c_void;
+    }
+    #[link(name = "objc")]
+    extern "C" {
+        fn objc_getClass(name: *const c_char) -> *const c_void;
+        fn sel_registerName(name: *const c_char) -> *const c_void;
+        fn objc_msgSend();
+    }
+
+    unsafe {
+        let class = objc_getClass(c"AVCaptureDevice".as_ptr());
+        if class.is_null() {
+            return 0;
+        }
+        let sel = sel_registerName(c"authorizationStatusForMediaType:".as_ptr());
+        // objc_msgSend must be called through the exact prototype of the
+        // method it dispatches to.
+        let send: unsafe extern "C" fn(*const c_void, *const c_void, *const c_void) -> isize =
+            std::mem::transmute(objc_msgSend as unsafe extern "C" fn());
+        send(class, sel, AVMediaTypeAudio)
+    }
+}
