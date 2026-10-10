@@ -10,6 +10,7 @@ import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { burstConfetti } from "./celebrate";
 import { mountMascot, type MascotState } from "./components/mascot";
+import { watchSpeechEngine } from "./engine";
 
 type AppState = "idle" | "recording" | "processing";
 type Flash = "done" | "error" | "celebrate";
@@ -42,6 +43,9 @@ let appState: AppState = "idle";
 let flash: Flash | null = null;
 let caption = "";
 let flashTimer: ReturnType<typeof setTimeout> | undefined;
+// A first dictation can wait on the speech model loading; say so, so the
+// pill doesn't look stuck.
+let warming = false;
 
 function currentView(): View {
   return appState === "idle" && flash ? flash : appState;
@@ -52,7 +56,8 @@ function render() {
   document.body.dataset.view = view;
   document.body.dataset.app = appState;
   mascot.set(VIEWS[view].mascot);
-  labelEl.textContent = view === "celebrate" ? caption : VIEWS[view].label;
+  labelEl.textContent =
+    view === "celebrate" ? caption : view === "processing" && warming ? "Warming up" : VIEWS[view].label;
   requestAnimationFrame(reportHitRect);
 }
 
@@ -185,6 +190,11 @@ void listen<string>("correction-learned", (e) => celebrate(`Got it, "${e.payload
 // Cmd-V, so nothing at the OS level marks this as new.
 void listen<boolean>("watching-edits", (e) => {
   document.body.classList.toggle("watching", e.payload);
+});
+
+watchSpeechEngine((stt) => {
+  warming = stt.state === "loading";
+  render();
 });
 
 render();
