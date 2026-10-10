@@ -79,5 +79,9 @@ through ONNX Runtime, as in the app.
 
 ## Machines
 
-- macOS, Apple M1 Pro (10 cores): see `results/`.
+- macOS, Apple M1 Pro (10 cores, 16 GB): [`results/2026-10-10-apple-m1-pro.json`](results/2026-10-10-apple-m1-pro.json).
+  The machine got busy during that run (load 2.9 at start, 40.6 at the end).
+  Parakeet and whisper-Metal speeds matched two other runs within a few
+  percent; whisper CPU-only, measured last, ranged from 0.18 to 0.36 mean RTF
+  across runs, so read that row as rough.
 - Windows numbers: not measured yet.
