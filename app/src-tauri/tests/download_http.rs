@@ -14,6 +14,9 @@ use std::sync::{Arc, Mutex};
 
 const FIXTURE_LEN: usize = 1024 * 1024;
 const CUT_AT: usize = 400 * 1024;
+const OVERSIZED_COPIES: usize = 16;
+/// Bytes the `Oversized` reply got onto the wire. Only one test uses it.
+static OVERSIZED_SENT: AtomicUsize = AtomicUsize::new(0);
 
 /// What the server does with the next request. Unscripted requests get `Serve`.
 #[derive(Clone, Copy)]
@@ -22,6 +25,9 @@ enum Reply {
     Status(u16),
     /// Promise the full body, send this many bytes, then hang up.
     CloseAfter(usize),
+    /// Stream the file over and over, up to `OVERSIZED_COPIES` times, with no
+    /// Content-Length: a server serving far more than the registry says.
+    Oversized,
 }
 
 struct Fixture {
@@ -111,6 +117,18 @@ fn serve(
         ),
         (_, None) => ("200 OK".to_string(), data),
     };
+    if let Reply::Oversized = reply {
+        let _ = write!(stream, "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n");
+        // Bounded so a client without a size cap fails the test instead of
+        // filling the disk. Stops early once the client hangs up.
+        for chunk in data.chunks(64 * 1024).cycle().take(OVERSIZED_COPIES * 16) {
+            if stream.write_all(chunk).is_err() {
+                break;
+            }
+            OVERSIZED_SENT.fetch_add(chunk.len(), Ordering::SeqCst);
+        }
+        return;
+    }
     let _ = write!(
         stream,
         "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
@@ -239,6 +257,63 @@ fn resume_after_restart_uses_part_file() {
     assert_eq!(fx.ranges(), vec![None, Some(format!("bytes={CUT_AT}-"))]);
     assert_eq!(std::fs::read(file_in(&dir, "f.bin")).unwrap(), *fx.data);
     assert!(!part.exists());
+}
+
+#[test]
+fn range_not_satisfiable_restarts_from_scratch() {
+    let fx = Fixture::start();
+    fx.then(Reply::Status(416));
+    let dir = app_data();
+    let spec = spec(&fx.url, FIXTURE_LEN as u64, &fx.sha());
+    let part = file_in(&dir, "f.bin.part");
+    std::fs::create_dir_all(part.parent().unwrap()).unwrap();
+    std::fs::write(&part, vec![7u8; CUT_AT]).unwrap();
+
+    assert_eq!(run(spec, &dir), Ok(()));
+
+    assert_eq!(fx.ranges(), vec![Some(format!("bytes={CUT_AT}-")), None]);
+    assert_eq!(std::fs::read(file_in(&dir, "f.bin")).unwrap(), *fx.data);
+}
+
+#[test]
+fn body_longer_than_registry_size_is_cut_off() {
+    let fx = Fixture::start();
+    fx.then(Reply::Oversized);
+    let dir = app_data();
+    let spec = spec(&fx.url, FIXTURE_LEN as u64, &fx.sha());
+    let mut most = 0;
+
+    let result = download_model(spec, &dir, &AtomicBool::new(false), &mut |p| {
+        most = most.max(p.downloaded)
+    });
+
+    assert_eq!(result, Err(DownloadError::Checksum));
+    assert!(most <= FIXTURE_LEN as u64, "reported {most} bytes");
+    // The client hung up early instead of reading all 16 MiB.
+    let sent = OVERSIZED_SENT.load(Ordering::SeqCst);
+    assert!(
+        sent < OVERSIZED_COPIES * FIXTURE_LEN,
+        "server sent {sent} bytes"
+    );
+    assert!(!file_in(&dir, "f.bin.part").exists());
+    assert!(!file_in(&dir, "f.bin").exists());
+}
+
+#[test]
+fn panic_mid_download_becomes_an_error() {
+    let fx = Fixture::start();
+    let dir = app_data();
+    let spec = spec(&fx.url, FIXTURE_LEN as u64, &fx.sha());
+
+    let result = download_model(spec, &dir, &AtomicBool::new(false), &mut |_| {
+        panic!("progress sink blew up")
+    });
+
+    assert_eq!(result, Err(DownloadError::Stopped));
+    assert_eq!(
+        DownloadError::Stopped.to_string(),
+        "The download stopped unexpectedly. Press Retry."
+    );
 }
 
 #[test]

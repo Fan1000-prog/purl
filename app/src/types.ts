@@ -58,10 +58,13 @@ export interface ModelProgress {
   downloaded_bytes: number;
   size_bytes: number;
 }
+export type DownloadFailure =
+  | "disk_full" | "offline" | "http" | "checksum" | "cancelled" | "io" | "stopped";
 export interface ModelDone {
   id: string;
   ok: boolean;
   error: string | null;
+  kind: DownloadFailure | null; // null when ok
 }
 export type EngineState =
   | { state: "missing" } | { state: "loading" } | { state: "ready" }
