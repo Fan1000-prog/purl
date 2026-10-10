@@ -5,9 +5,13 @@
 use super::{TextInjector, Trust};
 use crate::inject::InjectError;
 use crate::voice_commands::Key;
+use windows::Win32::Foundation::HWND;
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS, KEYEVENTF_KEYUP,
     VIRTUAL_KEY, VK_CONTROL, VK_DOWN, VK_LEFT, VK_RETURN, VK_RIGHT, VK_TAB, VK_UP,
+};
+use windows::Win32::UI::WindowsAndMessaging::{
+    GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE, WS_EX_APPWINDOW, WS_EX_TOOLWINDOW,
 };
 
 fn vk(k: Key) -> VIRTUAL_KEY {
@@ -101,4 +105,45 @@ pub fn mic_consent_value() -> Option<String> {
     // `len` is in bytes and includes the terminating NUL.
     let chars = (len as usize / 2).saturating_sub(1);
     Some(String::from_utf16_lossy(&buf[..chars]))
+}
+
+/// Turn a window into a tool window: no taskbar button and, unlike
+/// `skip_taskbar` alone, no Alt-Tab entry. For the overlay pill.
+pub fn make_tool_window(hwnd: HWND) {
+    let ex = unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) };
+    let ex = (ex | WS_EX_TOOLWINDOW.0 as isize) & !(WS_EX_APPWINDOW.0 as isize);
+    unsafe { SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex) };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use windows::core::w;
+    use windows::Win32::UI::WindowsAndMessaging::{CreateWindowExW, DestroyWindow, WS_POPUP};
+
+    #[test]
+    fn tool_window_style_sticks() {
+        let hwnd = unsafe {
+            CreateWindowExW(
+                WS_EX_APPWINDOW,
+                w!("STATIC"),
+                w!("purl-test"),
+                WS_POPUP,
+                0,
+                0,
+                10,
+                10,
+                None,
+                None,
+                None,
+                None,
+            )
+        }
+        .expect("create a test window");
+        make_tool_window(hwnd);
+        let ex = unsafe { GetWindowLongPtrW(hwnd, GWL_EXSTYLE) };
+        unsafe { DestroyWindow(hwnd) }.unwrap();
+        assert_ne!(ex & WS_EX_TOOLWINDOW.0 as isize, 0);
+        assert_eq!(ex & WS_EX_APPWINDOW.0 as isize, 0);
+    }
 }
