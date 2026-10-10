@@ -145,9 +145,7 @@ impl Settings {
             // onto the qwen-tuned cleanup, and coerce any other unrecognized
             // tag to the default. A deliberate ALT_MODEL choice made AFTER this
             // migration is respected because the flag is then set.
-            if settings.ollama_model == ALT_MODEL {
-                settings.ollama_model = DEFAULT_MODEL.into();
-            } else if !is_allowed_model(&settings.ollama_model) {
+            if settings.ollama_model == ALT_MODEL || !is_allowed_model(&settings.ollama_model) {
                 settings.ollama_model = DEFAULT_MODEL.into();
             }
             settings.model_migrated = true;
@@ -225,9 +223,11 @@ mod tests {
         assert_eq!(Settings::default().claude_model, DEFAULT_CLAUDE_MODEL);
 
         let path = std::env::temp_dir().join("purl-settings-ai-engine.json");
-        let mut s = Settings::default();
-        s.ai_engine = AiEngine::Gemini;
-        s.model_migrated = true;
+        let s = Settings {
+            ai_engine: AiEngine::Gemini,
+            model_migrated: true,
+            ..Default::default()
+        };
         s.save(&path).unwrap();
         let on_disk = std::fs::read_to_string(&path).unwrap();
         assert!(on_disk.contains(r#""ai_engine": "gemini""#));
@@ -269,10 +269,12 @@ mod tests {
         // Switching Local -> Gemini -> Local must preserve the local choice,
         // which is why models are stored per engine rather than in one field.
         let path = std::env::temp_dir().join("purl-settings-engine-switch.json");
-        let mut s = Settings::default();
-        s.ollama_model = ALT_MODEL.into();
-        s.model_migrated = true;
-        s.ai_engine = AiEngine::Gemini;
+        let s = Settings {
+            ollama_model: ALT_MODEL.into(),
+            model_migrated: true,
+            ai_engine: AiEngine::Gemini,
+            ..Default::default()
+        };
         s.save(&path).unwrap();
         let loaded = Settings::load(&path);
         assert_eq!(loaded.ollama_model, ALT_MODEL);
@@ -311,9 +313,11 @@ mod tests {
     #[test]
     fn structure_mode_round_trips() {
         let path = std::env::temp_dir().join("purl-settings-structure.json");
-        let mut s = Settings::default();
-        s.structure_mode = StructureMode::Email;
-        s.command_detection = false;
+        let s = Settings {
+            structure_mode: StructureMode::Email,
+            command_detection: false,
+            ..Default::default()
+        };
         s.save(&path).unwrap();
         let loaded = Settings::load(&path);
         assert_eq!(loaded.structure_mode, StructureMode::Email);
@@ -324,8 +328,10 @@ mod tests {
     #[test]
     fn coding_mode_round_trips_as_snake_case() {
         let path = std::env::temp_dir().join("purl-settings-coding.json");
-        let mut s = Settings::default();
-        s.structure_mode = StructureMode::Coding;
+        let s = Settings {
+            structure_mode: StructureMode::Coding,
+            ..Default::default()
+        };
         s.save(&path).unwrap();
         let on_disk = std::fs::read_to_string(&path).unwrap();
         assert!(on_disk.contains(r#""structure_mode": "coding""#));
@@ -373,10 +379,12 @@ mod tests {
     #[test]
     fn round_trips_through_disk() {
         let path = std::env::temp_dir().join("purl-settings-test.json");
-        let mut s = Settings::default();
-        s.ollama_model = "llama3.2:3b".into();
-        s.model_migrated = true;
-        s.inject_mode = InjectMode::ClipboardOnly;
+        let s = Settings {
+            ollama_model: "llama3.2:3b".into(),
+            model_migrated: true,
+            inject_mode: InjectMode::ClipboardOnly,
+            ..Default::default()
+        };
         s.save(&path).unwrap();
         let loaded = Settings::load(&path);
         assert_eq!(loaded.ollama_model, "llama3.2:3b");
@@ -417,8 +425,10 @@ mod tests {
             root.join("models/ggml-base.en.bin")
         );
         std::fs::remove_dir_all(&root).unwrap();
-        let mut s2 = Settings::default();
-        s2.whisper_model_path = "/custom/model.bin".into();
+        let s2 = Settings {
+            whisper_model_path: "/custom/model.bin".into(),
+            ..Default::default()
+        };
         assert_eq!(
             s2.resolved_model_path(Path::new("/tmp/appsupport")),
             PathBuf::from("/custom/model.bin")
@@ -438,8 +448,10 @@ mod tests {
         .unwrap();
         assert!(!Settings::load(&path).onboarding_complete);
 
-        let mut s = Settings::default();
-        s.onboarding_complete = true;
+        let s = Settings {
+            onboarding_complete: true,
+            ..Default::default()
+        };
         s.save(&path).unwrap();
         assert!(Settings::load(&path).onboarding_complete);
         std::fs::remove_file(&path).unwrap();

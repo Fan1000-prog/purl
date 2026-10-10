@@ -70,7 +70,7 @@ mod tests {
             ts: n,
             raw: format!("raw {n}"),
             cleaned: format!("cleaned {n}"),
-            used_llm: n % 2 == 0,
+            used_llm: n.is_multiple_of(2),
             record_ms: 1000,
             transcribe_ms: 500,
             cleanup_ms: 200,

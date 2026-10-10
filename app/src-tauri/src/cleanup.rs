@@ -391,6 +391,7 @@ pub fn ollama_status(model: &str) -> (bool, bool) {
 
 /// Same match rule as `ollama_status`: an exact name or a bare name that is a
 /// tag prefix of an installed model.
+#[cfg(test)]
 pub fn model_installed(installed: &[String], model: &str) -> bool {
     installed
         .iter()

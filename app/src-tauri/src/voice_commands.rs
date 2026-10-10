@@ -77,7 +77,7 @@ pub fn parse(text: &str) -> Vec<Segment> {
     let mut segments: Vec<Segment> = Vec::new();
     let mut pending = String::new();
 
-    let mut flush = |pending: &mut String, segments: &mut Vec<Segment>| {
+    let flush = |pending: &mut String, segments: &mut Vec<Segment>| {
         let t = pending.trim();
         if !t.is_empty() {
             segments.push(Segment::Text(t.to_string()));

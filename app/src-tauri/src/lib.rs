@@ -602,7 +602,7 @@ fn on_hotkey(app: &AppHandle, shortcut_state: ShortcutState) {
             if state.recorder.lock().unwrap().is_none() {
                 return; // nothing recording (e.g. start failed)
             }
-            if held.map_or(false, |d| d < MIN_HOLD) {
+            if held.is_some_and(|d| d < MIN_HOLD) {
                 log_line(
                     app,
                     "hotkey: tap shorter than MIN_HOLD — recording discarded",

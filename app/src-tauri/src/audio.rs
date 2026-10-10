@@ -21,9 +21,12 @@ pub enum AudioError {
     Empty,
 }
 
+/// What the capture thread hands back: samples, sample rate, channel count.
+type Capture = Result<(Vec<f32>, u32, u16), AudioError>;
+
 pub struct Recorder {
     stop_tx: mpsc::Sender<()>,
-    handle: JoinHandle<Result<(Vec<f32>, u32, u16), AudioError>>,
+    handle: JoinHandle<Capture>,
     level: Arc<AtomicU32>,
 }
 
