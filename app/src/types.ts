@@ -59,7 +59,7 @@ export interface ModelProgress {
   size_bytes: number;
 }
 export type DownloadFailure =
-  | "disk_full" | "offline" | "http" | "checksum" | "cancelled" | "io" | "unknown";
+  | "disk_full" | "offline" | "http" | "checksum" | "cancelled" | "io" | "stopped";
 export interface ModelDone {
   id: string;
   ok: boolean;

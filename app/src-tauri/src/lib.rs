@@ -1688,16 +1688,15 @@ fn download_model(app: AppHandle, state: tauri::State<AppState>, id: String) -> 
             );
         });
         let done = model_done(spec.id, &result);
-        let error = done.error.clone();
         log_line(
             &app,
             &format!(
                 "model {}: download {}",
                 spec.id,
-                error.as_deref().unwrap_or("ok")
+                done.error.as_deref().unwrap_or("ok")
             ),
         );
-        app.state::<AppState>().downloads.finish(spec.id, error);
+        app.state::<AppState>().downloads.finish(spec.id, &result);
         let _ = app.emit("model-done", done);
     });
     Ok(())

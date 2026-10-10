@@ -54,10 +54,18 @@ impl Downloads {
         Some(cancel)
     }
 
-    /// Release `id`, remembering `error` (if any) for `models_status`.
-    pub fn finish(&self, id: &str, error: Option<String>) {
-        if let Some(e) = error {
-            self.errors.lock().unwrap().insert(id.to_string(), e);
+    /// Release `id`, remembering a failure for `models_status`. A user's
+    /// cancel isn't a failure: the model reads as missing with its partial
+    /// bytes, so the UI can offer Resume.
+    pub fn finish(&self, id: &str, result: &Result<(), download::DownloadError>) {
+        match result {
+            Ok(()) | Err(download::DownloadError::Cancelled) => {}
+            Err(e) => {
+                self.errors
+                    .lock()
+                    .unwrap()
+                    .insert(id.to_string(), e.to_string());
+            }
         }
         self.running.lock().unwrap().remove(id);
     }
@@ -129,6 +137,7 @@ fn bytes_on_disk(app_data: &Path, spec: &ModelSpec) -> u64 {
 
 #[cfg(test)]
 mod tests {
+    use super::download::DownloadError;
     use super::*;
 
     fn empty_app_data(tag: &str) -> std::path::PathBuf {
@@ -146,7 +155,7 @@ mod tests {
             d.try_start("qwen3.5-2b").is_some(),
             "other ids are independent"
         );
-        d.finish("parakeet-v3", None);
+        d.finish("parakeet-v3", &Ok(()));
         assert!(d.try_start("parakeet-v3").is_some());
     }
 
@@ -164,14 +173,17 @@ mod tests {
         let d = Downloads::default();
         d.try_start("parakeet-v3");
         d.try_start("qwen3.5-2b");
-        d.finish("qwen3.5-2b", Some("You're offline.".into()));
+        d.finish("qwen3.5-2b", &Err(DownloadError::Offline));
 
         let views = d.views(&app_data);
         let ids: Vec<_> = views.iter().map(|v| v.id).collect();
         assert_eq!(ids, ["parakeet-v3", "qwen3.5-2b", "qwen3.5-4b"]);
         assert_eq!(views[0].state, ModelState::Downloading);
         assert_eq!(views[1].state, ModelState::Failed);
-        assert_eq!(views[1].error.as_deref(), Some("You're offline."));
+        assert_eq!(
+            views[1].error.as_deref(),
+            Some("You're offline. Connect to the internet and press Retry.")
+        );
         assert_eq!(views[2].state, ModelState::Missing);
         assert_eq!(views[2].error, None);
         assert_eq!(views[0].size_bytes, 670_619_803);
@@ -182,10 +194,31 @@ mod tests {
         let app_data = empty_app_data("retry");
         let d = Downloads::default();
         d.try_start("qwen3.5-2b");
-        d.finish("qwen3.5-2b", Some("boom".into()));
+        d.finish("qwen3.5-2b", &Err(DownloadError::Checksum));
         d.try_start("qwen3.5-2b");
-        d.finish("qwen3.5-2b", None);
+        d.finish("qwen3.5-2b", &Ok(()));
         assert_eq!(d.views(&app_data)[1].state, ModelState::Missing);
+    }
+
+    #[test]
+    fn cancel_is_not_a_failure() {
+        let app_data = empty_app_data("cancel");
+        let dir = model_dir(&app_data, "qwen3.5-2b");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("Qwen_Qwen3.5-2B-Q4_K_M.gguf.part"),
+            vec![0u8; 4096],
+        )
+        .unwrap();
+        let d = Downloads::default();
+        d.try_start("qwen3.5-2b");
+        d.finish("qwen3.5-2b", &Err(DownloadError::Cancelled));
+
+        let view = d.views(&app_data).remove(1);
+        assert_eq!(view.state, ModelState::Missing);
+        assert_eq!(view.downloaded_bytes, 4096, "UI can offer Resume");
+        assert_eq!(view.error, None);
+        let _ = std::fs::remove_dir_all(&app_data);
     }
 
     #[test]

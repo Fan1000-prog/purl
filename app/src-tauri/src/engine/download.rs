@@ -43,7 +43,7 @@ impl DownloadError {
             DownloadError::Checksum => "checksum",
             DownloadError::Cancelled => "cancelled",
             DownloadError::Io(_) => "io",
-            DownloadError::Stopped => "unknown",
+            DownloadError::Stopped => "stopped",
         }
     }
 }
@@ -323,7 +323,7 @@ mod tests {
             (DownloadError::Checksum, "checksum"),
             (DownloadError::Cancelled, "cancelled"),
             (DownloadError::Io("x".into()), "io"),
-            (DownloadError::Stopped, "unknown"),
+            (DownloadError::Stopped, "stopped"),
         ];
         for (error, kind) in cases {
             assert_eq!(error.kind(), kind, "{error:?}");
