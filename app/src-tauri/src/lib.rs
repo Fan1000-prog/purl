@@ -975,6 +975,9 @@ fn run_pipeline(app: &AppHandle, recorder: Recorder, record_ms: u64) -> Result<(
     );
 
     let has_key_commands = voice_commands::has_keys(&segments);
+    // Set when a synthesized paste or key fails mid-way and the text went to
+    // the clipboard instead.
+    let mut paste_failed = false;
     match settings.inject_mode {
         InjectMode::Paste => {
             if own_window_focused {
@@ -993,24 +996,37 @@ fn run_pipeline(app: &AppHandle, recorder: Recorder, record_ms: u64) -> Result<(
                     if i > 0 {
                         std::thread::sleep(std::time::Duration::from_millis(120));
                     }
-                    match seg {
+                    let sent = match seg {
                         voice_commands::Segment::Text(t) => {
                             log_line(app, "inject: pasting via Cmd-V");
-                            inject::inject(t).map_err(|e| {
-                                log_line(app, &format!("inject: paste FAILED: {e}"));
-                                format!("Paste failed: {e}")
-                            })?;
+                            inject::inject(t)
                         }
                         voice_commands::Segment::Key(k) => {
                             log_line(app, &format!("inject: voice command key {k:?}"));
-                            platform::injector().send_key(*k).map_err(|e| {
-                                log_line(app, &format!("inject: key FAILED: {e}"));
-                                format!("Keystroke failed: {e}")
-                            })?;
+                            platform::injector().send_key(*k)
                         }
+                    };
+                    if let Err(e) = sent {
+                        // Typically Windows UIPI: the target runs as
+                        // administrator. Hand the user the whole dictation
+                        // to paste themselves rather than half of it.
+                        log_line(app, &format!("inject: FAILED: {e} -> clipboard fallback"));
+                        inject::copy_to_clipboard(&expanded)
+                            .map_err(|e| format!("Clipboard failed: {e}"))?;
+                        notify(
+                            app,
+                            &format!(
+                                "Copied to clipboard — paste with {}.",
+                                platform::PASTE_SHORTCUT
+                            ),
+                        );
+                        paste_failed = true;
+                        break;
                     }
                 }
-                log_line(app, "inject: all segments sent OK");
+                if !paste_failed {
+                    log_line(app, "inject: all segments sent OK");
+                }
             } else {
                 log_line(
                     app,
@@ -1078,6 +1094,7 @@ fn run_pipeline(app: &AppHandle, recorder: Recorder, record_ms: u64) -> Result<(
         && matches!(settings.inject_mode, InjectMode::Paste)
         && !own_window_focused
         && paste_trust.can_paste()
+        && !paste_failed
     {
         spawn_correction_watch(app.clone(), expanded.clone());
     }
