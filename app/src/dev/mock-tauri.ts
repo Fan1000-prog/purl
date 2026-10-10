@@ -15,9 +15,13 @@
 //   onboarded=1             skip onboarding (onboarding_complete = true)
 //   models=ready            every model already downloaded
 //   step_ms=<n>             ms between progress events (default 120)
+//   data=demo               history, stats, dictionary, snippets, transforms,
+//                           learned corrections and a last result to show
+//   fail_cmd=a,b            these commands reject (screens' error states)
+//   stt=loading|failed      speech engine state (default follows the model)
 // Tests also drive it through `window.__purlMock` (see MockControls).
 
-import type { EngineStatusView, ModelView, Trust } from "../types";
+import type { DownloadErrorKind, EngineStatusView, ModelView, Trust } from "../types";
 
 type Handler = (event: { event: string; id: number; payload: unknown }) => void;
 
@@ -43,6 +47,13 @@ const ERRORS = {
   http: "The download server said 503. Press Retry in a minute.",
   cancelled: "Download cancelled.",
 } as const;
+
+const KINDS: Record<keyof typeof ERRORS, DownloadErrorKind> = {
+  offline: "offline",
+  diskfull: "disk_full",
+  http: "http",
+  cancelled: "cancelled",
+};
 
 function install() {
   const q = new URLSearchParams(location.search);
@@ -80,6 +91,7 @@ function install() {
     hotkey: "CmdOrCtrl+Shift+Space",
     inject_mode: "paste",
     cleanup_mode: "fast",
+    smart_model: "qwen3.5-2b",
     structure_mode: "none",
     command_detection: true,
     learn_corrections: false,
@@ -107,7 +119,9 @@ function install() {
     timers.delete(m.id);
     m.state = error === null ? "ready" : error === ERRORS.cancelled ? "missing" : "failed";
     m.error = error === ERRORS.cancelled ? null : error;
-    emit("model-done", { id: m.id, ok: error === null, error });
+    const which = (Object.keys(ERRORS) as (keyof typeof ERRORS)[]).find((k) => ERRORS[k] === error);
+    const kind = error === null ? null : which ? KINDS[which] : "unknown";
+    emit("model-done", { id: m.id, ok: error === null, error, kind });
     if (error === null && m.kind === "stt") {
       setEngine({ state: "loading" });
       setTimeout(() => setEngine({ state: "ready" }), 600);
@@ -139,14 +153,37 @@ function install() {
     return Promise.resolve(null);
   };
 
+  const sttParam = q.get("stt");
+  if (sttParam === "loading") engine.stt = { state: "loading" };
+  if (sttParam === "failed") engine.stt = { state: "failed", reason: "The speech model couldn't load. Re-download it in Settings." };
+
   const status = () => ({
-    whisper_bin_found: true,
-    whisper_model_found: engine.stt.state === "ready",
-    whisper_model_path: "",
-    accessibility_trusted: trust.ax !== "denied",
+    paste_trust: trust.ax,
+    learning_supported: window.__PURL_PLATFORM__ === "macos",
     hotkey: settings.hotkey,
     state: "idle",
   });
+
+  const demo = q.get("data") === "demo";
+  const now = Math.floor(Date.now() / 1000);
+  const today = new Date().toISOString().slice(0, 10);
+  const history = demo
+    ? [
+        { ts: now - 7200, raw: "um so can we move the standup to ten", cleaned: "Can we move the standup to 10?", used_llm: false, record_ms: 3000, transcribe_ms: 180, cleanup_ms: 2, words: 7 },
+        { ts: now - 60, raw: "hey sam thanks for the notes ill send the deck by friday", cleaned: "Hey Sam, thanks for the notes. I'll send the deck by Friday.", used_llm: true, record_ms: 4200, transcribe_ms: 210, cleanup_ms: 640, words: 12 },
+      ]
+    : [];
+  let glossary = demo ? "# My words\nYesware\npr = PR\nGoogle Chat\n" : "";
+  let snippets = demo ? [{ trigger: "my email address", expansion: "sam@example.com" }] : [];
+  const builtins = [
+    { id: "polish", name: "Polish", description: "Improve clarity and conciseness", prompt: "…", hotkey: "Alt+1", builtin: true },
+    { id: "prompt-engineer", name: "Prompt Engineer", description: "Constructs optimal prompts", prompt: "…", hotkey: "Alt+2", builtin: true },
+  ];
+  let transforms = demo ? builtins.map((t) => ({ ...t })) : [];
+  let learned = demo
+    ? [{ from: "yes where", to: "Yesware", before: "on", after: "today", created: now, hits: 2, last_hit: now, seen: 2, active: true }]
+    : [];
+  const failing = new Set((q.get("fail_cmd") ?? "").split(",").filter(Boolean));
 
   const commands: Record<string, (args: any) => unknown> = {
     models_status: () => models.map((m) => ({ ...m })),
@@ -166,15 +203,48 @@ function install() {
     get_status: status,
     get_settings: () => ({ ...settings }),
     save_settings: ({ newSettings }) => Object.assign(settings, newSettings) && null,
-    get_history: () => [],
-    get_stats: () => ({ total_words: 0, total_record_ms: 0, total_sessions: 0, llm_cleanups: 0, per_day: {} }),
-    get_snippets: () => [],
-    get_transforms: () => [],
-    get_learned_rules: () => [],
-    get_glossary: () => "",
-    get_last_result: () => null,
-    cloud_key_status: () => false,
-    list_installed_models: () => ({ models: [] }),
+    get_history: () => history,
+    clear_history: () => {
+      history.length = 0;
+      return null;
+    },
+    get_stats: () => ({
+      total_words: history.reduce((n, h) => n + h.words, 0),
+      total_record_ms: history.reduce((n, h) => n + h.record_ms, 0),
+      total_sessions: history.length,
+      llm_cleanups: history.filter((h) => h.used_llm).length,
+      per_day: history.length ? { [today]: history.reduce((n, h) => n + h.words, 0) } : {},
+    }),
+    get_snippets: () => snippets,
+    save_snippets: ({ list }) => {
+      snippets = list;
+      return null;
+    },
+    get_transforms: () => transforms,
+    save_transforms: ({ list }) => {
+      transforms = list;
+      return null;
+    },
+    reset_transforms: () => (transforms = builtins.map((t) => ({ ...t }))),
+    get_learned_rules: () => learned,
+    delete_learned_rule: ({ from }) => {
+      learned = learned.filter((r) => r.from !== from);
+      return null;
+    },
+    clear_learned_rules: () => {
+      learned = [];
+      return null;
+    },
+    get_glossary: () => glossary,
+    save_glossary: ({ content }) => {
+      glossary = content;
+      return null;
+    },
+    get_last_result: () => (history.length ? { ...history[history.length - 1], note: null } : null),
+    set_hotkey: ({ newHotkey }) => {
+      settings.hotkey = newHotkey;
+      return null;
+    },
     toggle_recording: () => null,
     "plugin:app|version": () => "0.9.0",
     "plugin:updater|check": () => null,
@@ -193,6 +263,7 @@ function install() {
       }
       if (cmd === "plugin:event|unlisten") return Promise.resolve(null);
       calls.push({ cmd, args });
+      if (failing.has(cmd)) return Promise.reject(`${cmd} failed (mock)`);
       const handler = commands[cmd];
       return handler ? Promise.resolve(handler(args ?? {})) : Promise.resolve(null);
     },
@@ -208,6 +279,8 @@ function install() {
       emit("state", "recording");
       setTimeout(() => emit("state", "processing"), 150);
       setTimeout(() => {
+        const words = text.split(/\s+/).length;
+        history.push({ ts: Math.floor(Date.now() / 1000), raw: text, cleaned: text, used_llm: false, record_ms: 2000, transcribe_ms: 200, cleanup_ms: 1, words });
         emit("result", { raw: text, cleaned: text, used_llm: false, note: null, transcribe_ms: 200, cleanup_ms: 1 });
         emit("state", "idle");
       }, 300);

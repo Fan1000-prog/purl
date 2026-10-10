@@ -6,7 +6,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { ModelDone, ModelProgress, ModelView } from "../types";
+import type { DownloadErrorKind, ModelDone, ModelProgress, ModelView } from "../types";
 
 export interface ModelDownloadOptions {
   id: string;
@@ -22,9 +22,14 @@ export interface ModelDownload {
   destroy(): void;
 }
 
-// download.rs words a disk-full refusal this way. Retrying can't help until
-// space is freed, so Retry waits for the window to regain focus.
-const DISK_FULL = /^Not enough free space/;
+// Retrying a disk-full refusal can't help until space is freed, so Retry
+// waits for the window to regain focus. Builds that predate `kind` only send
+// the sentence, so fall back to download.rs's wording.
+const DISK_FULL_TEXT = /^Not enough free space/;
+
+function isDiskFull(kind: DownloadErrorKind | null | undefined, error: string | null): boolean {
+  return kind === undefined ? DISK_FULL_TEXT.test(error ?? "") : kind === "disk_full";
+}
 
 export function formatBytes(bytes: number): string {
   return bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.round(bytes / 1e6)} MB`;
@@ -59,6 +64,9 @@ export function mountModelDownload(el: HTMLElement, opts: ModelDownloadOptions):
   const errorEl = q<HTMLElement>(".model-error");
 
   let model: ModelView | null = null;
+  // The last failure's kind; models_status doesn't carry one, so a failure
+  // known only from it is judged by its sentence.
+  let failureKind: DownloadErrorKind | null | undefined;
   let cancelling = false;
   let readyFired = false;
   const unlisteners: Promise<UnlistenFn>[] = [];
@@ -86,7 +94,7 @@ export function mountModelDownload(el: HTMLElement, opts: ModelDownloadOptions):
     q(".model-count").textContent = `${formatBytes(m.downloaded_bytes)} of ${formatBytes(m.size_bytes)}`;
 
     go.textContent = m.state === "failed" ? "Retry" : m.downloaded_bytes > 0 ? "Resume" : "Download";
-    go.disabled = m.state === "failed" && DISK_FULL.test(m.error ?? "");
+    go.disabled = m.state === "failed" && isDiskFull(failureKind, m.error);
 
     if (m.state === "ready" && !readyFired) {
       readyFired = true;
@@ -131,8 +139,9 @@ export function mountModelDownload(el: HTMLElement, opts: ModelDownloadOptions):
     }),
     listen<ModelDone>("model-done", (e) => {
       if (!model || e.payload.id !== opts.id) return;
+      failureKind = e.payload.kind;
       if (e.payload.ok) model = { ...model, state: "ready", downloaded_bytes: model.size_bytes, error: null };
-      else if (cancelling) model = { ...model, state: "missing", error: null };
+      else if (cancelling || e.payload.kind === "cancelled") model = { ...model, state: "missing", error: null };
       else model = { ...model, state: "failed", error: e.payload.error };
       cancelling = false;
       render();
@@ -141,7 +150,7 @@ export function mountModelDownload(el: HTMLElement, opts: ModelDownloadOptions):
 
   // Space may have been freed in Finder / Explorer meanwhile.
   const onFocus = () => {
-    if (model?.state === "failed" && DISK_FULL.test(model.error ?? "")) go.disabled = false;
+    if (model?.state === "failed" && isDiskFull(failureKind, model.error)) go.disabled = false;
   };
   window.addEventListener("focus", onFocus);
 
