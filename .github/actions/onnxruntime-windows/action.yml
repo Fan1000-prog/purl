@@ -1,0 +1,32 @@
+name: ONNX Runtime (Windows)
+description: >
+  Fetch Microsoft's CPU-only ONNX Runtime 1.28.0, pinned by sha256, and set
+  ORT_LIB_LOCATION / ORT_PREFER_DYNAMIC_LINK / PATH so the build links it
+  dynamically. pyke's CDN has no CPU-only Windows build (only DirectML/GPU
+  ones), and its build assumes AVX2.
+runs:
+  using: composite
+  steps:
+    - name: Cache ONNX Runtime
+      uses: actions/cache@v4
+      with:
+        path: ${{ runner.temp }}/onnxruntime
+        key: onnxruntime-win-x64-1.28.0
+    - name: Fetch ONNX Runtime
+      shell: pwsh
+      working-directory: ${{ runner.temp }}
+      run: |
+        $dir = "onnxruntime"
+        $lib = Join-Path $env:RUNNER_TEMP "$dir/onnxruntime-win-x64-1.28.0/lib"
+        if (-not (Test-Path "$lib/onnxruntime.dll")) {
+          $url = "https://github.com/microsoft/onnxruntime/releases/download/v1.28.0/onnxruntime-win-x64-1.28.0.zip"
+          for ($i = 1; $i -le 3; $i++) {
+            try { Invoke-WebRequest $url -OutFile ort.zip; break } catch { if ($i -eq 3) { throw }; Start-Sleep 10 }
+          }
+          $hash = (Get-FileHash ort.zip -Algorithm SHA256).Hash.ToLower()
+          if ($hash -ne "abef733dacbe2f571547a7150b479b5cb9cc0df22f96c24983a42cadb1b4f8bc") { throw "onnxruntime zip sha256 mismatch: $hash" }
+          Expand-Archive ort.zip -DestinationPath $dir -Force
+        }
+        "ORT_LIB_LOCATION=$lib" >> $env:GITHUB_ENV
+        "ORT_PREFER_DYNAMIC_LINK=1" >> $env:GITHUB_ENV
+        $lib >> $env:GITHUB_PATH
