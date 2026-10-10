@@ -1,5 +1,6 @@
-//! Text injection at the cursor: set the clipboard, synthesize Cmd-V, then
-//! restore the previous clipboard. Requires the Accessibility permission.
+//! Text injection at the cursor: set the clipboard, synthesize the OS paste
+//! chord, then restore the previous clipboard. The keystrokes themselves are
+//! `platform::TextInjector`'s job; this module owns the clipboard choreography.
 
 use std::thread::sleep;
 use std::time::Duration;
@@ -9,78 +10,13 @@ pub enum InjectError {
     #[error("clipboard error: {0}")]
     Clipboard(String),
     #[error("failed to synthesize keystroke — is Accessibility permission granted?")]
+    #[cfg_attr(windows, allow(dead_code))]
     KeyEvent,
-}
-
-/// kVK_ANSI_V
-const KEYCODE_V: u16 = 9;
-/// kVK_ANSI_C
-const KEYCODE_C: u16 = 8;
-
-/// True when this process is trusted for Accessibility (needed for Cmd-V).
-pub fn accessibility_trusted() -> bool {
-    #[cfg(target_os = "macos")]
-    {
-        #[link(name = "ApplicationServices", kind = "framework")]
-        extern "C" {
-            fn AXIsProcessTrusted() -> bool;
-        }
-        unsafe { AXIsProcessTrusted() }
-    }
-    #[cfg(not(target_os = "macos"))]
-    false
-}
-
-/// Like `accessibility_trusted`, but shows the macOS grant dialog when not
-/// trusted. The grant is tied to the exact binary, so every dev rebuild
-/// silently revokes it — prompting at startup makes that visible.
-pub fn prompt_accessibility() -> bool {
-    #[cfg(target_os = "macos")]
-    {
-        use std::ffi::c_void;
-        use std::ptr;
-
-        #[link(name = "ApplicationServices", kind = "framework")]
-        extern "C" {
-            fn AXIsProcessTrustedWithOptions(options: *const c_void) -> bool;
-            static kAXTrustedCheckOptionPrompt: *const c_void;
-        }
-        #[link(name = "CoreFoundation", kind = "framework")]
-        extern "C" {
-            fn CFDictionaryCreate(
-                allocator: *const c_void,
-                keys: *const *const c_void,
-                values: *const *const c_void,
-                num_values: isize,
-                key_callbacks: *const c_void,
-                value_callbacks: *const c_void,
-            ) -> *const c_void;
-            fn CFRelease(cf: *const c_void);
-            static kCFTypeDictionaryKeyCallBacks: c_void;
-            static kCFTypeDictionaryValueCallBacks: c_void;
-            static kCFBooleanTrue: *const c_void;
-        }
-
-        unsafe {
-            let keys = [kAXTrustedCheckOptionPrompt];
-            let values = [kCFBooleanTrue];
-            let options = CFDictionaryCreate(
-                ptr::null(),
-                keys.as_ptr(),
-                values.as_ptr(),
-                1,
-                &kCFTypeDictionaryKeyCallBacks as *const c_void,
-                &kCFTypeDictionaryValueCallBacks as *const c_void,
-            );
-            let trusted = AXIsProcessTrustedWithOptions(options);
-            if !options.is_null() {
-                CFRelease(options);
-            }
-            trusted
-        }
-    }
-    #[cfg(not(target_os = "macos"))]
-    false
+    /// The OS refused the synthesized input (e.g. Windows UIPI blocks input
+    /// into an elevated window).
+    #[error("{0}")]
+    #[cfg_attr(not(windows), allow(dead_code))]
+    Synthesis(String),
 }
 
 /// Put `text` on the clipboard only (fallback mode — no permissions needed).
@@ -101,7 +37,7 @@ pub fn inject(text: &str) -> Result<(), InjectError> {
     // Give the pasteboard a beat to settle before the paste keystroke.
     sleep(Duration::from_millis(80));
 
-    let result = send_cmd_v();
+    let result = crate::platform::injector().paste();
 
     // Let the target app read the clipboard before restoring it.
     sleep(Duration::from_millis(250));
@@ -109,21 +45,6 @@ pub fn inject(text: &str) -> Result<(), InjectError> {
         let _ = cb.set_text(prev);
     }
     result
-}
-
-#[cfg(target_os = "macos")]
-fn send_cmd_v() -> Result<(), InjectError> {
-    send_keystroke(KEYCODE_V, true)
-}
-
-#[cfg(target_os = "macos")]
-fn send_cmd_c() -> Result<(), InjectError> {
-    send_keystroke(KEYCODE_C, true)
-}
-
-#[cfg(not(target_os = "macos"))]
-fn send_cmd_c() -> Result<(), InjectError> {
-    Err(InjectError::KeyEvent)
 }
 
 /// Sentinel written to the clipboard before the synthesized Cmd-C; if it is
@@ -153,7 +74,7 @@ pub fn capture_selection() -> Result<(Option<String>, Option<String>), InjectErr
         }
     };
 
-    if let Err(e) = send_cmd_c() {
+    if let Err(e) = crate::platform::injector().copy() {
         restore(&mut cb, &previous);
         return Err(e);
     }
@@ -184,43 +105,4 @@ pub fn restore_clipboard(previous: &Option<String>) {
             }
         }
     }
-}
-
-/// Synthesize a single unmodified keystroke (arrow keys, Return, Tab…) —
-/// used by voice commands like "go down". Same permission requirement as
-/// pasting: the Accessibility grant.
-pub fn send_key(keycode: u16) -> Result<(), InjectError> {
-    send_keystroke(keycode, false)
-}
-
-#[cfg(target_os = "macos")]
-fn send_keystroke(keycode: u16, with_command: bool) -> Result<(), InjectError> {
-    use core_graphics::event::{CGEvent, CGEventFlags, CGEventTapLocation};
-    use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
-
-    let source = CGEventSource::new(CGEventSourceStateID::CombinedSessionState)
-        .map_err(|_| InjectError::KeyEvent)?;
-    let down = CGEvent::new_keyboard_event(source.clone(), keycode, true)
-        .map_err(|_| InjectError::KeyEvent)?;
-    let up =
-        CGEvent::new_keyboard_event(source, keycode, false).map_err(|_| InjectError::KeyEvent)?;
-    if with_command {
-        down.set_flags(CGEventFlags::CGEventFlagCommand);
-        up.set_flags(CGEventFlags::CGEventFlagCommand);
-    }
-
-    down.post(CGEventTapLocation::HID);
-    sleep(Duration::from_millis(30));
-    up.post(CGEventTapLocation::HID);
-    Ok(())
-}
-
-#[cfg(not(target_os = "macos"))]
-fn send_keystroke(_keycode: u16, _with_command: bool) -> Result<(), InjectError> {
-    Err(InjectError::KeyEvent)
-}
-
-#[cfg(not(target_os = "macos"))]
-fn send_cmd_v() -> Result<(), InjectError> {
-    Err(InjectError::KeyEvent)
 }

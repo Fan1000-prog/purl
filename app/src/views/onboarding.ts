@@ -7,6 +7,7 @@ import {
   type TranscriptPayload,
 } from "../main";
 import { createHotkeyRecorder, HOTKEY_RECORDER_CANCEL } from "./hotkey-recorder";
+import type { Trust } from "../types";
 
 const $ = <T extends HTMLElement>(id: string): T =>
   document.getElementById(id) as T;
@@ -15,7 +16,7 @@ interface StatusPayload {
   whisper_bin_found: boolean;
   whisper_model_found: boolean;
   whisper_model_path: string;
-  accessibility_trusted: boolean;
+  paste_trust: Trust;
   hotkey: string;
   state: string;
 }
@@ -112,8 +113,8 @@ async function renderChecks(body: HTMLElement) {
         check(s.whisper_model_found, "Speech model downloaded",
           `Missing — expected at ${s.whisper_model_path}. The install script downloads it.`),
       ];
-      items.push(
-        check(s.accessibility_trusted,
+      if (s.paste_trust !== "not_required") items.push(
+        check(s.paste_trust === "granted",
           "Accessibility permission — lets it type for you, and read the field it typed into",
           "System Settings → Privacy & Security → Accessibility → turn on Purl. You can do this later — transcripts will go to your clipboard instead. This one grant covers both: pasting at your cursor, and reading back the field afterwards to catch words you fix by hand. macOS asks once, for both. Turn the reading half off any time in Settings → Learn corrections."),
       );

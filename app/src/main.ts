@@ -11,7 +11,7 @@ import { initFieldNotice } from "./views/field-notice";
 import { initUpdates } from "./views/updates";
 import { createHotkeyRecorder, HOTKEY_RECORDER_CANCEL } from "./views/hotkey-recorder";
 import { celebrate } from "./celebrate";
-import type { CleanupMode } from "./types";
+import type { CleanupMode, Trust } from "./types";
 
 export interface Settings {
   hotkey: string;
@@ -93,7 +93,8 @@ interface StatusPayload {
   whisper_bin_found: boolean;
   whisper_model_found: boolean;
   whisper_model_path: string;
-  accessibility_trusted: boolean;
+  paste_trust: Trust;
+  learning_supported: boolean;
   hotkey: string;
   state: string;
 }
@@ -173,8 +174,12 @@ async function refreshStatus() {
   setState(s.state);
   $<HTMLElement>("hotkey-label").textContent = prettyHotkey(s.hotkey);
 
+  // Windows has no learning yet; hide the switch rather than offer a dead one.
+  // (style, not `hidden`: `.field` sets its own display, which beats it.)
+  $<HTMLElement>("learn-corrections-row").style.display = s.learning_supported ? "" : "none";
+
   const list = $<HTMLUListElement>("check-items");
-  list.replaceChildren(
+  const items = [
     checkItem(
       s.whisper_bin_found,
       "Speech engine (whisper-cli)",
@@ -185,12 +190,18 @@ async function refreshStatus() {
       "Speech model downloaded",
       `Missing — expected at ${s.whisper_model_path}. The install script downloads it, or see the README.`,
     ),
-    checkItem(
-      s.accessibility_trusted,
-      "Accessibility permission — lets it type for you, and read the field it typed into",
-      "System Settings → Privacy & Security → Accessibility → turn on Purl. Until then, transcripts go to your clipboard — paste with ⌘V. The same grant lets it read that field back to catch words you fix (Settings → Learn corrections).",
-    ),
-  );
+  ];
+  // Only macOS has a paste permission; on Windows there is nothing to grant.
+  if (s.paste_trust !== "not_required") {
+    items.push(
+      checkItem(
+        s.paste_trust === "granted",
+        "Accessibility permission — lets it type for you, and read the field it typed into",
+        "System Settings → Privacy & Security → Accessibility → turn on Purl. Until then, transcripts go to your clipboard — paste with ⌘V. The same grant lets it read that field back to catch words you fix (Settings → Learn corrections).",
+      ),
+    );
+  }
+  list.replaceChildren(...items);
 }
 
 async function loadSettings(): Promise<Settings> {

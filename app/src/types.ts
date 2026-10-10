@@ -37,3 +37,4 @@ export interface LearnedRule {
 }
 
 export type CleanupMode = "off" | "fast" | "smart";
+export type Trust = "granted" | "denied" | "not_required";
