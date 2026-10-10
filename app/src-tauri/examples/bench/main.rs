@@ -68,13 +68,14 @@ fn main() {
     let scratch = args.cache.join("runs");
     std::fs::create_dir_all(&scratch).expect("create scratch dir");
 
-    let (parakeet, dictation_transcripts) = bench_parakeet(&args.model_dir, &data);
+    let machine = machine(&repo);
+    let (parakeet, dictation_transcripts) = bench_parakeet(&args.model_dir, &scratch, &data);
     let whisper_gpu = bench_whisper(&args.whisper_cli, &ggml, &scratch, &data, true);
     let whisper_cpu = bench_whisper(&args.whisper_cli, &ggml, &scratch, &data, false);
 
     let report = json!({
         "date": chrono::Local::now().format("%Y-%m-%d").to_string(),
-        "machine": machine(&repo),
+        "machine": machine,
         "datasets": {
             "librispeech_100": {
                 "source": "LibriSpeech test-clean, first 100 utterances by sorted id (openslr.org/resources/12)",
@@ -177,7 +178,7 @@ fn load_set(dir: &Path) -> Vec<Clip> {
 }
 
 /// Parakeet results, plus its dictation-set transcripts for the cleanup run.
-fn bench_parakeet(dir: &Path, data: &[(&str, Vec<Clip>)]) -> (Value, Vec<String>) {
+fn bench_parakeet(dir: &Path, scratch: &Path, data: &[(&str, Vec<Clip>)]) -> (Value, Vec<String>) {
     eprintln!("parakeet: loading from {}", dir.display());
     let engine = ParakeetEngine::new(dir.to_path_buf());
     let t0 = Instant::now();
@@ -214,6 +215,7 @@ fn bench_parakeet(dir: &Path, data: &[(&str, Vec<Clip>)]) -> (Value, Vec<String>
             })
             .collect();
         out[name] = score(clips, &results);
+        save_transcripts(scratch, "parakeet", name, clips, &results);
         if *name == "dictation_10" {
             dictation = results.into_iter().map(|r| r.hypothesis).collect();
         }
@@ -254,6 +256,8 @@ fn bench_whisper(
             })
             .collect();
         out[name] = score(clips, &results);
+        let engine = if gpu { "whisper-gpu" } else { "whisper-cpu" };
+        save_transcripts(scratch, engine, name, clips, &results);
     }
     out["cold_load_ms"] = json!(cold_load.map(ms));
     out
@@ -330,6 +334,18 @@ fn whisper_version(cli: &Path) -> String {
         .unwrap_or_else(|| "whisper.cpp version unknown".into())
 }
 
+/// Per-clip reference and transcript, kept in the cache for error analysis.
+fn save_transcripts(dir: &Path, engine: &str, set: &str, clips: &[Clip], results: &[ClipResult]) {
+    let rows: String = clips
+        .iter()
+        .zip(results)
+        .map(|(c, r)| format!("{}\t{}\t{}\n", c.file, c.reference, r.hypothesis))
+        .collect();
+    let path = dir.join(format!("{engine}-{set}.tsv"));
+    std::fs::write(&path, format!("file\treference\thypothesis\n{rows}"))
+        .unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+}
+
 fn score(clips: &[Clip], results: &[ClipResult]) -> Value {
     let pairs = clips
         .iter()
@@ -378,6 +394,7 @@ fn machine(repo: &Path) -> Value {
         "ram_gb": ram_bytes().map(|b| b / (1 << 30)),
         "os": os_name(),
         "arch": std::env::consts::ARCH,
+        "load_avg_1m_at_start": load_avg(),
         "purl_commit": run(Command::new("git").arg("-C").arg(repo).args(["rev-parse", "--short", "HEAD"])),
     })
 }
@@ -406,6 +423,21 @@ fn ram_bytes() -> Option<u64> {
     } else {
         None
     }
+}
+
+/// Other work on the machine skews the speed numbers, so the run says how
+/// busy it was.
+fn load_avg() -> Option<f64> {
+    if !cfg!(target_os = "macos") {
+        return None;
+    }
+    // "{ 1.23 2.34 3.45 }"
+    run(Command::new("sysctl").args(["-n", "vm.loadavg"]))?
+        .trim_matches(|c| c == '{' || c == '}' || c == ' ')
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()
 }
 
 fn os_name() -> Option<String> {

@@ -22,19 +22,19 @@ pub fn corpus_wer<'a>(pairs: impl IntoIterator<Item = (&'a str, &'a str)>) -> f6
     }
 }
 
-/// Lowercase words with punctuation removed. Apostrophes inside a word stay
-/// ("don't"), so contractions still count as one word; a curly one counts
-/// as straight.
+/// Lowercase words, split at anything that isn't a letter, digit or
+/// apostrophe ("flour-fattened" is two words). Apostrophes inside a word
+/// stay, so "don't" is one word; a curly one counts as straight.
 fn words_of(text: &str) -> Vec<String> {
-    text.split_whitespace()
-        .map(|w| {
-            w.chars()
-                .map(|c| if c == '\u{2019}' { '\'' } else { c })
-                .filter(|c| c.is_alphanumeric() || *c == '\'')
-                .collect::<String>()
-                .trim_matches('\'')
-                .to_lowercase()
+    text.chars()
+        .map(|c| match c {
+            '\u{2019}' => '\'',
+            c if c.is_alphanumeric() || c == '\'' => c,
+            _ => ' ',
         })
+        .collect::<String>()
+        .split_whitespace()
+        .map(|w| w.trim_matches('\'').to_lowercase())
         .filter(|w| !w.is_empty())
         .collect()
 }
@@ -67,6 +67,11 @@ mod tests {
     #[test]
     fn wer_normalizes_case_and_punct() {
         assert_eq!(wer("Hello, World!", "hello world"), 0.0);
+    }
+
+    #[test]
+    fn wer_splits_hyphenated_words() {
+        assert_eq!(wer("flour fattened sauce", "flour-fattened sauce"), 0.0);
     }
 
     #[test]
