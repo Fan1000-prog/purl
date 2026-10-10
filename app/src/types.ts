@@ -35,3 +35,37 @@ export interface LearnedRule {
   /** False while a risky rule waits for its second sighting. */
   active: boolean;
 }
+
+// ---- Engine + model contract (Rust: src-tauri/src/engine) ----
+// Commands: models_status(): ModelView[], download_model(id), cancel_download(id),
+// delete_model(id), engine_status(): EngineStatusView.
+// Events: "model-progress" ModelProgress, "model-done" ModelDone,
+// "engine-status" EngineStatusView.
+
+export type ModelKind = "stt" | "llm";
+export type ModelState = "missing" | "downloading" | "ready" | "failed";
+export interface ModelView {
+  id: string;            // "parakeet-v3" | "qwen3.5-2b" | "qwen3.5-4b"
+  label: string;         // "Parakeet v3 (speech)"
+  kind: ModelKind;
+  size_bytes: number;
+  state: ModelState;
+  downloaded_bytes: number;
+  error: string | null;  // user-facing sentence when state === "failed"
+}
+export interface ModelProgress {
+  id: string;
+  downloaded_bytes: number;
+  size_bytes: number;
+}
+export interface ModelDone {
+  id: string;
+  ok: boolean;
+  error: string | null;
+}
+export type EngineState =
+  | { state: "missing" } | { state: "loading" } | { state: "ready" }
+  | { state: "idle" }    | { state: "failed"; reason: string };
+export interface EngineStatusView { stt: EngineState; llm: EngineState; }
+export type CleanupMode = "off" | "fast" | "smart";
+export type Trust = "granted" | "denied" | "not_required";
