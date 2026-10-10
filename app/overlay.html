@@ -1,0 +1,270 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Purl Voice</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+        background: transparent;
+        background-color: rgba(0, 0, 0, 0);
+        overflow: hidden;
+        height: 100%;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+      body {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 6px;
+        padding-bottom: 3px;
+      }
+
+      /* ---------- shared pill chrome ---------- */
+      #idle,
+      #pill,
+      #spinner {
+        display: none;
+        align-items: center;
+        justify-content: center;
+        background: #161618;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+      }
+      body:not(.recording):not(.processing) #idle {
+        display: flex;
+      }
+      body.recording #pill {
+        display: flex;
+      }
+      body.processing #spinner {
+        display: flex;
+      }
+
+      /* ---------- idle: mic only ---------- */
+      #idle {
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+        cursor: pointer;
+        color: #f5f3ef;
+      }
+
+      /* ---------- recording: cancel / waveform / confirm ---------- */
+      #pill {
+        gap: 7px;
+        padding: 6px;
+        border-radius: 999px;
+      }
+      #pill button {
+        width: 26px;
+        height: 26px;
+        border-radius: 50%;
+        border: none;
+        padding: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+      }
+      #cancel {
+        background: #2c2c31;
+      }
+      #cancel:hover {
+        background: #3a3a40;
+      }
+      #confirm {
+        background: #b08968;
+      }
+      #confirm:hover {
+        background: #bd9a7c;
+      }
+      #wave {
+        display: block;
+      }
+
+      /* ---------- processing: spinner ---------- */
+      #spinner {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        position: relative;
+      }
+      #spinner span {
+        position: absolute;
+        left: 50%;
+        top: 50%;
+        width: 2px;
+        height: 5px;
+        margin-left: -1px;
+        margin-top: -2.5px;
+        border-radius: 1px;
+        background: #f5f3ef;
+        animation: fade 0.8s linear infinite;
+      }
+      @keyframes fade {
+        0% {
+          opacity: 1;
+        }
+        100% {
+          opacity: 0.15;
+        }
+      }
+
+      /* ---------- celebration: caption + countdown bar ---------- */
+      #celebrate {
+        display: none;
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
+        max-width: 190px;
+      }
+      #celebrate.show {
+        display: flex;
+      }
+      #celebrate-caption {
+        font: 600 11px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        color: #f5f3ef;
+        background: #161618;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 999px;
+        padding: 4px 10px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      #celebrate-track {
+        width: 100px;
+        height: 3px;
+        border-radius: 2px;
+        background: rgba(255, 255, 255, 0.18);
+        overflow: hidden;
+      }
+      #celebrate-fill {
+        width: 100%;
+        height: 100%;
+        background: #b08968;
+        transform-origin: left;
+        transform: scaleX(1);
+        transition: transform 5000ms linear;
+      }
+
+      #confetti-layer {
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        overflow: hidden;
+      }
+      .confetti-burst {
+        position: absolute;
+        bottom: 4px;
+        left: 50%;
+        width: 0;
+        height: 0;
+      }
+      .confetti-piece {
+        position: absolute;
+        bottom: 0;
+        left: 0;
+        width: 5px;
+        height: 8px;
+        border-radius: 2px;
+        opacity: 0;
+        animation: confetti-fall var(--duration) var(--delay) cubic-bezier(0.15, 0.6, 0.4, 1) forwards;
+      }
+      @keyframes confetti-fall {
+        0% {
+          opacity: 1;
+          transform: translate(0, 6px) rotate(0deg);
+        }
+        100% {
+          opacity: 0;
+          transform: translate(var(--x), calc(-1 * var(--fall))) rotate(var(--rot));
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        #spinner span,
+        #celebrate-fill,
+        #watching {
+          animation: none;
+          transition: none;
+        }
+      }
+
+      /* ---------- watch indicator: dot while a correction window is open ---------- */
+      /* Sits against the control it belongs to, because that is what the
+         README, Settings, and the design doc all say it does. Measured in
+         the 200x82 window: the mic is 38x38 (36 plus its 1px border) at
+         x 81-119, y 44-82; the recording pill is 150x40 at x 25-175,
+         y 42-82. The dot is 12x12 (an 8px tan core inside a 2px ink ring) at
+         y 57-69 — the mic's own centre line — and parks 2px clear of
+         whichever control is showing: x 121-133 beside the mic, x 177-189
+         beside the pill. Neither position intersects the rect
+         reportHitRect() reports for that state, and pointer-events stays
+         off, so it can neither be clicked nor shrink what the pill can
+         click.
+
+         The ring is the contrast treatment: this floats over an arbitrary
+         application, and a bare tan dot vanished against a light Google Chat or a
+         Gmail compose window. Dark ring inside, faint paper halo outside, so
+         it holds an edge on any background without reading as an alert. */
+      #watching {
+        position: fixed;
+        bottom: 13px;
+        left: 121px;
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: #b08968;
+        border: 2px solid #161618;
+        box-shadow: 0 0 0 1px rgba(245, 243, 239, 0.55);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 200ms ease;
+      }
+      body.recording #watching {
+        left: 177px;
+      }
+      body.watching #watching {
+        opacity: 1;
+      }
+    </style>
+    <script type="module" src="/src/overlay.ts" defer></script>
+  </head>
+  <body>
+    <div id="confetti-layer"></div>
+    <div id="watching" title="Watching for corrections"></div>
+
+    <div id="celebrate">
+      <div id="celebrate-caption"></div>
+      <div id="celebrate-track"><div id="celebrate-fill"></div></div>
+    </div>
+
+    <div id="idle" aria-label="Ready to dictate" title="Hold your dictation hotkey to talk">
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+        <rect x="5.5" y="1.5" width="5" height="8" rx="2.5" stroke="currentColor" stroke-width="1.4" />
+        <path d="M3 7.5 a5 5 0 0 0 10 0 M8 12.5 V15" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" fill="none" />
+      </svg>
+    </div>
+
+    <div id="pill">
+      <button id="cancel" aria-label="Cancel dictation" title="Cancel">
+        <svg width="11" height="11" viewBox="0 0 14 14" fill="none">
+          <path d="M2 2 L12 12 M12 2 L2 12" stroke="#f5f3ef" stroke-width="2" stroke-linecap="round" />
+        </svg>
+      </button>
+      <canvas id="wave" width="70" height="26"></canvas>
+      <button id="confirm" aria-label="Finish and transcribe" title="Finish &amp; transcribe">
+        <svg width="12" height="12" viewBox="0 0 16 16" fill="none">
+          <path d="M2.5 8.5 L6.5 12.5 L13.5 4" stroke="#161618" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+      </button>
+    </div>
+
+    <div id="spinner" aria-label="Transcribing"></div>
+  </body>
+</html>

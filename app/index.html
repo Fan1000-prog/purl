@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Purl</title>
+    <script type="module" src="/src/main.ts" defer></script>
+  </head>
+
+  <body>
+    <div class="shell">
+      <nav class="sidebar">
+        <div class="brand">
+          <div class="brand-row">
+            <svg class="brand-logo" width="30" height="30" viewBox="0 0 32 32" aria-hidden="true">
+              <circle cx="16" cy="16" r="12" fill="none" stroke="#201b14" stroke-width="2.6" />
+              <g stroke="#201b14" stroke-width="1.8" stroke-linecap="round">
+                <line x1="25" y1="16" x2="27.2" y2="16" transform="rotate(0 16 16)" />
+                <line x1="25" y1="16" x2="27.2" y2="16" transform="rotate(45 16 16)" />
+                <line x1="25" y1="16" x2="27.2" y2="16" transform="rotate(90 16 16)" />
+                <line x1="25" y1="16" x2="27.2" y2="16" transform="rotate(135 16 16)" />
+                <line x1="25" y1="16" x2="27.2" y2="16" transform="rotate(180 16 16)" />
+                <line x1="25" y1="16" x2="27.2" y2="16" transform="rotate(225 16 16)" />
+                <line x1="25" y1="16" x2="27.2" y2="16" transform="rotate(270 16 16)" />
+                <line x1="25" y1="16" x2="27.2" y2="16" transform="rotate(315 16 16)" />
+              </g>
+              <circle cx="16" cy="16" r="6.5" fill="#2E9A63" />
+            </svg>
+            <h1>Purl</h1>
+          </div>
+        </div>
+        <button class="nav-btn active" data-view="home" type="button">Home</button>
+        <button class="nav-btn" data-view="insights" type="button">Insights</button>
+        <button class="nav-btn" data-view="snippets" type="button">Snippets</button>
+        <button class="nav-btn" data-view="transforms" type="button">Transforms</button>
+
+        <div class="sidebar-settings" id="settings-nav">
+          <button class="nav-btn nav-settings" data-view="settings" data-settings-section="setup" type="button">
+            <svg class="gear-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <circle cx="8" cy="8" r="2.4" stroke="currentColor" stroke-width="1.4" />
+              <path d="M8 1.5v1.6M8 12.9v1.6M14.5 8h-1.6M3.1 8H1.5M12.4 3.6l-1.1 1.1M4.7 11.3l-1.1 1.1M12.4 12.4l-1.1-1.1M4.7 4.7L3.6 3.6" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+            </svg>
+            <span>Settings</span>
+            <span id="update-badge" class="update-badge hidden" title="Update available">●</span>
+          </button>
+          <div class="settings-flyout" role="menu" aria-label="Settings sections">
+            <button class="flyout-item" data-settings-section="setup" type="button" role="menuitem">Setup</button>
+            <button class="flyout-item" data-settings-section="updates" type="button" role="menuitem">Updates</button>
+            <button class="flyout-item" data-settings-section="tour" type="button" role="menuitem">Welcome tour</button>
+            <button class="flyout-item" data-settings-section="glossary" type="button" role="menuitem">Glossary</button>
+            <button class="flyout-item" data-settings-section="learning" type="button" role="menuitem">Learning</button>
+          </div>
+        </div>
+      </nav>
+
+      <main id="content" data-view="home">
+        <!-- ==================== HOME ==================== -->
+        <section class="view" id="view-home">
+          <button id="toggle-btn" class="dictate-row" type="button">
+            <span class="row-icon" aria-hidden="true">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                <rect x="5.5" y="1.5" width="5" height="8" rx="2.5" stroke="currentColor" stroke-width="1.4" />
+                <path d="M3 7.5 a5 5 0 0 0 10 0 M8 12.5 V15" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" fill="none" />
+              </svg>
+            </span>
+            <span class="row-main">
+              <span id="toggle-label" class="row-title">Start dictation</span>
+              <span class="row-sub">Hold <kbd id="hotkey-label">⌘⇧Space</kbd> and talk — release to transcribe</span>
+            </span>
+          </button>
+
+          <section class="group">
+            <h2 class="eyebrow">What it can do</h2>
+            <div class="feature-grid">
+              <button class="feature-card card-snippets" type="button" data-tag="SNIPPETS" data-goto="snippets" data-focus="snippet-trigger">
+                <span class="card-title">Snippets</span>
+                <span class="card-sub">Say “my email address” — it pastes the whole thing. Teach it your shortcuts.</span>
+              </button>
+              <button class="feature-card card-glossary" type="button" data-tag="GLOSSARY" data-goto="settings" data-focus="glossary-text">
+                <span class="card-title">Glossary</span>
+                <span class="card-sub">Whisper spells “Yesware” as “yes where”? Add your jargon once, it’s fixed forever.</span>
+              </button>
+              <button class="feature-card card-cleanup" type="button" data-tag="CLEANUP" data-goto="settings" data-focus="cleanup-mode">
+                <span class="card-title">Cleanup</span>
+                <span class="card-sub">Fast, AI, or raw — choose how much polish your words get.</span>
+              </button>
+              <button class="feature-card card-insights" type="button" data-tag="INSIGHTS" data-goto="insights">
+                <span class="card-title">Insights</span>
+                <span class="card-sub">Words dictated, speed, streaks. See how much typing you’ve skipped.</span>
+              </button>
+            </div>
+          </section>
+
+          <section class="group">
+            <div class="transcript-head">
+              <h2 class="eyebrow">Recent transcriptions</h2>
+              <button id="clear-history-btn" class="ghost" type="button">Clear history</button>
+            </div>
+            <ul id="history-list" class="history-list"></ul>
+            <p id="history-empty" class="meta">Nothing here yet. Hold ⌘⇧Space, say anything, release — watch it appear.</p>
+            <p id="note" class="meta"></p>
+          </section>
+        </section>
+
+        <!-- ==================== INSIGHTS ==================== -->
+        <section class="view" id="view-insights">
+          <h2 class="eyebrow">Your usage</h2>
+          <div class="stat-hero"><span id="stat-words" class="stat-num">0</span><span class="stat-label">Words dictated</span></div>
+          <div class="stat-row">
+            <div class="stat-card"><span id="stat-wpm" class="stat-num">—</span><span class="stat-label">Average WPM</span></div>
+            <div class="stat-card"><span id="stat-sessions" class="stat-num">0</span><span class="stat-label">Dictations</span></div>
+            <div class="stat-card"><span id="stat-cleanups" class="stat-num">0</span><span class="stat-label">AI cleanups</span></div>
+          </div>
+          <section class="group">
+            <div class="transcript-head">
+              <h2 class="eyebrow">Time</h2>
+              <select id="heatmap-range">
+                <option value="day">Day</option>
+                <option value="week">Week</option>
+                <option value="month" selected>Month</option>
+                <option value="year">Last 12 months</option>
+              </select>
+            </div>
+            <div id="heatmap" class="heatmap" role="img" aria-label="Daily dictation activity"></div>
+            <p class="meta heatmap-legend">Less <span class="heat h0"></span><span class="heat h1"></span><span class="heat h2"></span><span class="heat h3"></span> More</p>
+          </section>
+        </section>
+
+        <!-- ==================== SNIPPETS ==================== -->
+        <section class="view" id="view-snippets">
+          <h2 class="eyebrow">Snippets</h2>
+          <p class="meta">Say the trigger while dictating — like “my email address” — and the full expansion is pasted instead. Great for emails, links, and sign-offs.</p>
+          <form id="snippet-form">
+            <label class="field"><span>Trigger phrase</span><input id="snippet-trigger" placeholder="my email address" /></label>
+            <label class="field"><span>Expansion</span><textarea id="snippet-expansion" rows="3" placeholder="you@example.com"></textarea></label>
+            <div class="actions">
+              <button type="submit" class="ghost">Add snippet</button>
+              <span id="snippet-msg" class="meta"></span>
+            </div>
+          </form>
+          <ul id="snippet-list" class="snippet-list"></ul>
+        </section>
+
+        <!-- ==================== TRANSFORMS ==================== -->
+        <section class="view" id="view-transforms">
+          <h2 class="eyebrow">Transforms</h2>
+          <p class="meta">Select text in any app, press a transform’s hotkey, and the AI rewrites it in place — polish an email, turn rough notes into a proper prompt, or teach it your own rewrite. Runs on whichever cleanup model you selected — local by default, or your cloud model if you chose one.</p>
+          <div class="transforms-head">
+            <h2 class="eyebrow">My Transforms</h2>
+            <button id="transforms-reset" class="ghost" type="button">Reset to defaults</button>
+          </div>
+          <div id="transform-list" class="transform-grid"></div>
+          <p id="transforms-msg" class="meta"></p>
+        </section>
+
+        <!-- ==================== SETTINGS ==================== -->
+        <section class="view" id="view-settings" data-section="setup">
+          <div class="settings-section" id="settings-section-setup">
+            <section class="group" id="checklist">
+              <h2 class="eyebrow">Setup</h2>
+              <ul id="check-items"></ul>
+            </section>
+
+            <section class="group">
+              <h2 class="eyebrow">Preferences</h2>
+              <form id="settings-form">
+                <div class="field"><span>Hotkey</span><div id="hotkey-recorder"></div></div>
+                <label class="field"><span>Cleanup model</span>
+                  <select id="cleanup-model">
+                    <option value="local:qwen2.5:3b">qwen2.5:3b — Recommended (local)</option>
+                    <option value="local:llama3.2:3b">llama3.2:3b (local)</option>
+                    <option value="gemini:gemini-3.5-flash-lite">Gemini 3.5 Flash-Lite — free tier (cloud)</option>
+                    <option value="gemini:gemini-3.5-flash">Gemini 3.5 Flash (cloud)</option>
+                    <option value="gemini:gemini-2.5-flash">Gemini 2.5 Flash (cloud)</option>
+                    <option value="claude:claude-haiku-4-5-20251001">Claude Haiku 4.5 (cloud)</option>
+                    <option value="claude:claude-sonnet-5">Claude Sonnet 5 (cloud)</option>
+                  </select>
+                </label>
+                <div class="field"><span></span><div id="cleanup-model-status" class="model-status"></div></div>
+                <label class="field"><span>Output</span>
+                  <select id="inject-mode">
+                    <option value="paste">Paste at cursor</option>
+                    <option value="clipboard_only">Copy to clipboard only</option>
+                  </select>
+                </label>
+                <label class="field"><span>Cleanup</span>
+                  <select id="cleanup-mode">
+                    <option value="ai">AI — smarter, adds seconds</option>
+                    <option value="fast">Fast — instant, rule-based</option>
+                    <option value="off">Off — raw Whisper output</option>
+                  </select>
+                </label>
+                <label class="field"><span>Structure</span>
+                  <select id="structure-mode">
+                    <option value="none">Standard — as spoken</option>
+                    <option value="email">Email — greeting, paragraphs, sign-off</option>
+                    <option value="coding">Coding — prompts, markdown, tech terms</option>
+                  </select>
+                </label>
+                <label class="field field-check"><span>Voice commands</span>
+                  <span class="check-row">
+                    <input type="checkbox" id="command-detection" />
+                    <span class="meta">Say “go down”, “new line”, or “press enter” as its own sentence to control the cursor instead of typing the words.</span>
+                  </span>
+                </label>
+                <label class="field field-check"><span>Learn corrections</span>
+                  <span class="check-row">
+                    <input type="checkbox" id="learn-corrections" />
+                    <span class="meta">After pasting, Purl reads that text field for 30 seconds to notice words you fix by hand. Only the corrected word and the words either side of it are saved, and only on this Mac. Fields macOS marks as secure text — password fields — are never read, and learned words are never sent to a cloud model, even if you have cloud cleanup on. A dot appears beside the pill while it is watching; macOS won't prompt you, because this uses the same Accessibility permission as pasting.</span>
+                  </span>
+                </label>
+                <div class="actions">
+                  <button type="submit" class="ghost">Save settings</button>
+                  <span id="settings-msg" class="meta"></span>
+                </div>
+              </form>
+            </section>
+          </div>
+
+          <div class="settings-section" id="settings-section-updates">
+            <section class="group">
+              <h2 class="eyebrow">Updates</h2>
+              <p class="meta">You're on <span id="app-version">…</span>. Updates install with one click — no re-downloading files.</p>
+              <div class="actions">
+                <button id="update-btn" class="ghost" type="button">Check for updates</button>
+              </div>
+              <p id="update-status" class="meta"></p>
+            </section>
+          </div>
+
+          <div class="settings-section" id="settings-section-tour">
+            <section class="group">
+              <h2 class="eyebrow">Welcome tour</h2>
+              <p class="meta">Forgot how something works? Take the two-minute tour again.</p>
+              <div class="actions"><button id="replay-tour" class="ghost" type="button">Replay welcome tour</button></div>
+            </section>
+          </div>
+
+          <div class="settings-section" id="settings-section-glossary">
+            <section class="group">
+              <h2 class="eyebrow">Glossary</h2>
+              <p class="meta">One term per line, optional <code>term = expansion</code>. Teach it names, product terms and jargon so they come out spelled right.</p>
+              <textarea id="glossary-text" rows="8" spellcheck="false"></textarea>
+              <div class="actions">
+                <button id="glossary-save" class="ghost" type="button">Save glossary</button>
+                <span id="glossary-msg" class="meta"></span>
+              </div>
+            </section>
+          </div>
+
+          <div class="settings-section" id="settings-section-learning">
+            <section class="group">
+              <h2 class="eyebrow">Learned corrections</h2>
+              <p class="meta">Words you have fixed by hand. Each one is used only in the phrase you corrected it in, and to help Whisper hear it right next time. They stay on this Mac: they go to Whisper and to a local cleanup model only, never to a cloud one.</p>
+              <ul id="learned-list" class="snippet-list"></ul>
+              <p id="learned-empty" class="meta">Nothing learned yet. Fix a mis-heard word right after dictating and it will show up here.</p>
+              <div class="actions">
+                <button type="button" class="ghost" id="learned-clear">Clear all</button>
+                <span id="learned-msg" class="meta"></span>
+              </div>
+            </section>
+          </div>
+        </section>
+      </main>
+    </div>
+    <div id="onboarding" class="wizard-backdrop hidden">
+      <div class="wizard-card" role="dialog" aria-modal="true" aria-labelledby="wiz-title">
+        <h2 id="wiz-title"></h2>
+        <div id="wiz-body"></div>
+        <div class="wizard-foot">
+          <button id="wiz-skip" class="ghost" type="button">Skip</button>
+          <span id="wiz-progress" class="meta"></span>
+          <button id="wiz-next" class="ghost wiz-primary" type="button"></button>
+        </div>
+      </div>
+    </div>
+    <!-- One-time notice for installs that updated into field reading and so
+         never see the first-run wizard. Shown once, when onboarding is
+         already complete and this has not been dismissed yet. Same chrome as
+         the wizard on purpose — a parallel modal cost a CSS specificity bug
+         once already (see session-update.md). -->
+    <div id="update-notice" class="wizard-backdrop hidden">
+      <div class="wizard-card" role="dialog" aria-modal="true" aria-labelledby="un-title">
+        <h2 id="un-title">New update available</h2>
+        <p class="meta" id="un-body">Update now to get the latest features.</p>
+        <p class="meta">It takes a few seconds. Purl restarts itself when it's done.</p>
+        <p class="meta err hidden" id="un-error"></p>
+        <div class="wizard-foot">
+          <button id="un-later" class="ghost" type="button">Later</button>
+          <button id="un-update" class="ghost wiz-primary" type="button">Update</button>
+        </div>
+      </div>
+    </div>
+    <div id="field-notice" class="wizard-backdrop hidden">
+      <div class="wizard-card" role="dialog" aria-modal="true" aria-labelledby="fn-title">
+        <h2 id="fn-title">What's new</h2>
+        <p class="meta"><strong>Sharper dictation, your choice of model.</strong> Cleanup can now run on Gemini or Claude using your own API key. Faster, and better on long or accented speech. Set it up in Settings → Cleanup model.</p>
+        <p class="meta"><strong>Purl now learns from you.</strong> Fix a mis-heard word right after dictating and it will spell it your way next time.</p>
+        <div class="wizard-foot">
+          <span class="meta"></span>
+          <button id="fn-dismiss" class="ghost wiz-primary" type="button">Got it</button>
+        </div>
+      </div>
+    </div>
+    <div id="cloud-key-modal" class="wizard-backdrop hidden">
+      <div class="wizard-card" role="dialog" aria-modal="true" aria-labelledby="ck-title">
+        <h2 id="ck-title">Connect a cloud model</h2>
+        <p class="meta" id="ck-intro"></p>
+        <p><button type="button" class="ghost" id="ck-get-key">Get an API key →</button></p>
+        <label class="field"><span>API key</span>
+          <input type="password" id="ck-input" autocomplete="off" spellcheck="false" />
+        </label>
+        <p class="meta" id="ck-privacy"></p>
+        <p class="meta err hidden" id="ck-error"></p>
+        <div class="wizard-foot">
+          <button id="ck-cancel" class="ghost" type="button">Cancel</button>
+          <span id="ck-progress" class="meta"></span>
+          <button id="ck-save" class="ghost wiz-primary" type="button">Save &amp; Test</button>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>
