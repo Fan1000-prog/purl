@@ -7,3 +7,5 @@ dist/
 test-results/
 playwright-report/
 .lighthouseci/
+app/src-tauri/vendor/llama/*
+!app/src-tauri/vendor/llama/.gitkeep
