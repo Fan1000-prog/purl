@@ -701,13 +701,22 @@ fn stop_and_transcribe(app: &AppHandle) {
         let result = run_pipeline(&app, recorder, record_ms);
         let state = app.state::<AppState>();
         *state.processing.lock().unwrap() = false;
-        set_state(&app, "idle");
+        set_state(&app, pipeline_end_state(&result));
         if let Err(e) = result {
             log_line(&app, &format!("pipeline ERROR: {e}"));
             let _ = app.emit("pipeline-error", e.clone());
             notify(&app, &e);
         }
     });
+}
+
+/// The `state` event that closes a dictation. The overlay flashes "Sent" or
+/// "Didn't catch that" for these and then settles back to idle by itself.
+fn pipeline_end_state(result: &Result<(), String>) -> &'static str {
+    match result {
+        Ok(()) => "done",
+        Err(_) => "error",
+    }
 }
 
 /// Discard the in-flight recording without transcribing.
@@ -1855,6 +1864,23 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod pipeline_end_state_tests {
+    use super::pipeline_end_state;
+
+    #[test]
+    fn success_ends_done_and_any_failure_ends_error() {
+        assert_eq!(pipeline_end_state(&Ok(())), "done");
+        for e in [
+            "Didn't catch that — hold the key a little longer.",
+            "The speech model isn't downloaded yet.",
+            "Heard nothing — try again closer to the mic.",
+        ] {
+            assert_eq!(pipeline_end_state(&Err(e.into())), "error");
+        }
+    }
 }
 
 #[cfg(test)]
