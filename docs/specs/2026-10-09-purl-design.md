@@ -58,10 +58,10 @@ purl/
     src/                     # TS + Vite UI (redesigned)
     src-tauri/src/
       engine/                # NEW: sidecar lifecycle + model registry
-        mod.rs               #   Engine trait, SidecarProcess (spawn, health, reap)
+        mod.rs               #   traits, EngineStatus, SidecarProcess (llama-server only)
         models.rs            #   registry: id, url, sha256, size, licence
         download.rs          #   resumable, checksum-verified, disk-space-checked
-        stt.rs               #   sherpa-onnx offline server client (Parakeet)
+        stt.rs               #   transcribe-rs Parakeet, in-process
         llm.rs               #   llama-server client (Qwen), OpenAI-compatible
       platform/              # from the Windows port spec
         mod.rs  mac.rs  windows.rs
@@ -241,7 +241,7 @@ a permission prompt that leads nowhere.
 - **README:** hero (logo + one line "Speak softly. Send it clean."), 30-second
   demo GIF, Install (macOS / Windows), Quick guide, Privacy, Benchmark (table +
   how to reproduce), Case study (VendastaTalk → Purl: what problem, what changed,
-  measured results), Credits & licences (Parakeet CC-BY-4.0, sherpa-onnx, llama.cpp,
+  measured results), Credits & licences (Parakeet CC-BY-4.0, transcribe-rs, ONNX Runtime, llama.cpp,
   Qwen, fonts), Contributing, MIT.
 - **Landing page:** static site (Vite + plain TS, no framework needed), in the
   spirit of Heidi Dictate: big serif hero, the mascot listening, a live
@@ -256,7 +256,7 @@ reviewed by a fresh reviewer agent before merge:
 
 | Role | Slice |
 |---|---|
-| Engine SWE | `engine/` (ModelStore, sherpa-onnx STT, llama-server LLM), delete whisper/Ollama/BYOK |
+| Engine SWE | `engine/` (ModelStore, transcribe-rs STT, llama-server LLM), delete whisper/Ollama/BYOK |
 | Platform SWE | `platform/` traits, Windows injector/locator/overlay, CI matrix, installers |
 | App designer + FE | Tokens, mascot states, onboarding, all screens |
 | Web designer + FE | `purl-site` landing page |
