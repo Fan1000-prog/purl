@@ -13,6 +13,7 @@ import { displayHotkey, platform, privacySettingsUrl } from "../platform";
 import type { EngineState, EngineStatusView, Trust } from "../types";
 import { showSmartOffer } from "./smart-offer";
 import { getStatus } from "../status";
+import { FIELD_READING_DISCLOSURE } from "../disclosure";
 
 const STEPS = ["welcome", "permissions", "model", "try"] as const;
 type Step = (typeof STEPS)[number];
@@ -26,6 +27,9 @@ let mascot: Mascot | null = null;
 let download: ModelDownload | null = null;
 let pollTimer: ReturnType<typeof setInterval> | undefined;
 let sttState: EngineState["state"] = "missing";
+// True once the macOS Accessibility row, which carries the field-reading
+// disclosure, has been on screen. Only then may finishing mark it disclosed.
+let disclosureShown = false;
 
 function h<K extends keyof HTMLElementTagNameMap>(
   tag: K,
@@ -151,13 +155,14 @@ function permissions() {
   const ax = os === "macos"
     ? permissionRow(
         "Accessibility",
-        "So Purl can paste at your cursor. Without it, your words go to the clipboard. " +
-          "It also lets Purl read that text field for 30 seconds after pasting, to learn words you fix by hand. " +
-          "Password fields are never read, and you can turn this off in Settings.",
+        `So Purl can paste at your cursor. Without it, your words go to the clipboard. ${FIELD_READING_DISCLOSURE}`,
         privacySettingsUrl("accessibility")!,
       )
     : null;
-  if (ax) rows.push(ax.row);
+  if (ax) {
+    rows.push(ax.row);
+    disclosureShown = true;
+  }
 
   const note = h("p", { className: "onb-note warn-text", hidden: true });
   frame(
@@ -235,13 +240,14 @@ function showWarmup() {
 async function finish() {
   teardownStep();
   root.classList.add("hidden");
-  await saveOnboardingComplete().catch(() => {
+  await saveOnboardingComplete(disclosureShown).catch(() => {
     // Non-fatal: setup shows again next launch.
   });
   void showSmartOffer();
 }
 
 export function openOnboarding() {
+  disclosureShown = false;
   root.classList.remove("hidden");
   go("welcome");
 }

@@ -50,7 +50,8 @@ export function mountModelDownload(el: HTMLElement, opts: ModelDownloadOptions):
       <div class="model-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100"><span></span></div>
       <div class="model-count muted"></div>
     </div>
-    <p class="model-error warn-text" role="alert" hidden></p>
+    <p class="model-error warn-text" hidden></p>
+    <p class="model-live sr-only" aria-live="polite"></p>
     <div class="model-actions">
       <button type="button" class="btn btn-primary model-go">Download</button>
       <button type="button" class="btn model-cancel" hidden>Cancel</button>
@@ -67,13 +68,31 @@ export function mountModelDownload(el: HTMLElement, opts: ModelDownloadOptions):
   // The last failure's kind; models_status doesn't carry one, so a failure
   // known only from it is judged by its sentence.
   let failureKind: DownloadErrorKind | null | undefined;
+  let announced: ModelView["state"] | null = null;
   let cancelling = false;
   let readyFired = false;
   const unlisteners: Promise<UnlistenFn>[] = [];
 
+  // One polite announcement per state change, never per progress tick.
+  function announce(m: ModelView) {
+    if (announced === null || announced === m.state) {
+      announced = m.state;
+      return;
+    }
+    const name = opts.title ?? m.label;
+    q(".model-live").textContent =
+      m.state === "downloading" ? `Downloading ${name}.`
+      : m.state === "ready" ? `${name} is ready.`
+      : m.state === "failed" ? `Download failed. ${m.error ?? ""}`
+      : "Download cancelled. You can resume it.";
+    announced = m.state;
+  }
+
   function render() {
     if (!model) return;
     const m = model;
+    // Hiding the focused button would drop focus to <body>; hand it over.
+    const focused = document.activeElement;
     card.dataset.state = m.state;
     q(".model-title").textContent = opts.title ?? m.label;
     q(".model-meta").textContent = [formatBytes(m.size_bytes), opts.detail].filter(Boolean).join(" · ");
@@ -93,8 +112,15 @@ export function mountModelDownload(el: HTMLElement, opts: ModelDownloadOptions):
     (bar.firstElementChild as HTMLElement).style.width = `${pct}%`;
     q(".model-count").textContent = `${formatBytes(m.downloaded_bytes)} of ${formatBytes(m.size_bytes)}`;
 
-    go.textContent = m.state === "failed" ? "Retry" : m.downloaded_bytes > 0 ? "Resume" : "Download";
+    go.textContent =
+      m.state === "failed" ? "Retry"
+      : m.downloaded_bytes > 0 ? `Resume (${formatBytes(m.downloaded_bytes)} of ${formatBytes(m.size_bytes)})`
+      : "Download";
     go.disabled = m.state === "failed" && isDiskFull(failureKind, m.error);
+
+    if (focused === go && go.hidden && !cancel.hidden) cancel.focus();
+    if (focused === cancel && cancel.hidden && !go.hidden) go.focus();
+    announce(m);
 
     if (m.state === "ready" && !readyFired) {
       readyFired = true;
@@ -109,6 +135,7 @@ export function mountModelDownload(el: HTMLElement, opts: ModelDownloadOptions):
       card.dataset.state = "failed";
       errorEl.hidden = false;
       errorEl.textContent = `Purl doesn't know a model called "${opts.id}".`;
+      errorEl.setAttribute("role", "alert");
       go.hidden = true;
       return;
     }
@@ -158,6 +185,7 @@ export function mountModelDownload(el: HTMLElement, opts: ModelDownloadOptions):
     card.dataset.state = "failed";
     errorEl.hidden = false;
     errorEl.textContent = `Couldn't check the model (${String(err)}).`;
+    errorEl.setAttribute("role", "alert");
   });
 
   return {

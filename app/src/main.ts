@@ -50,14 +50,15 @@ export async function saveSettings(patch: Partial<Settings>): Promise<Settings> 
   return s;
 }
 
-/** Persist onboarding_complete=true. Also marks field reading as disclosed:
- *  setup says it plainly, so a user who has just read it there must not also
- *  get the one-time notice. And stamps the version: a "what's new" card for
- *  the only version they have ever run is noise. */
-export async function saveOnboardingComplete(): Promise<void> {
+/** Persist onboarding_complete=true, and stamp the version: a "what's new"
+ *  card for the only version they have ever run is noise. `disclosed` is
+ *  true only when setup showed the field-reading disclosure (macOS); then the
+ *  one-time notice would repeat it, so it is marked seen. Otherwise the
+ *  notice still owes it. */
+export async function saveOnboardingComplete(disclosed: boolean): Promise<void> {
   await saveSettings({
     onboarding_complete: true,
-    field_reading_disclosed: true,
+    ...(disclosed ? { field_reading_disclosed: true } : {}),
     last_seen_version: await getVersion().catch(() => ""),
   });
 }

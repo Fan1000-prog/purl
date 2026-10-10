@@ -334,7 +334,7 @@ const WATCH_SETTLED_POLLS: usize = 20; // 12 seconds
 /// indicator, the store, the log, and whether this watcher is still the
 /// current one. Split out so `run_correction_watch` — where the exit paths
 /// and the supersession rule live — can be tested without an `AppHandle`
-/// and without waiting 30 real seconds.
+/// and without waiting 90 real seconds.
 trait WatchHost {
     fn wait(&self, d: std::time::Duration);
     /// Light or clear the disclosure dot.
@@ -1995,7 +1995,7 @@ mod correction_watch_tests {
     }
 
     /// The bug this trait exists to pin. A superseded watcher must stop
-    /// polling — it was reading whatever now has focus, for up to 30s after
+    /// polling — it was reading whatever now has focus, for up to 90s after
     /// the dot went dark — and must not clear an indicator the newer watcher
     /// now owns.
     #[test]

@@ -187,7 +187,7 @@
               <input type="checkbox" id="command-detection" class="switch" />
             </label>
             <label class="setting" id="learn-setting">
-              <span class="setting-text"><span class="setting-name">Learn corrections</span><span class="setting-help muted" id="learn-help">After pasting, Purl reads that text field for 30 seconds to notice words you fix by hand. Only the fixed word and its neighbours are kept, on this Mac. Password fields are never read.</span></span>
+              <span class="setting-text"><span class="setting-name">Learn corrections</span><span class="setting-help muted" id="learn-help">After pasting, Purl reads that text field for up to 90 seconds (less once you stop editing) to notice words you fix by hand. Only the fixed word and its neighbours are kept, on this Mac. Password fields are never read.</span></span>
               <input type="checkbox" id="learn-corrections" class="switch" />
             </label>
           </section>
@@ -238,7 +238,7 @@
     <div id="field-notice" class="modal hidden">
       <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="fn-title">
         <h2 id="fn-title">What's new</h2>
-        <p class="muted"><strong>Purl learns from you.</strong> Fix a misheard word right after dictating and it spells it your way next time. To notice the fix, Purl reads the text field it pasted into for 30 seconds. Password fields are never read, and you can turn this off in Settings.</p>
+        <p class="muted"><strong>Purl learns from you.</strong> Fix a misheard word right after dictating and it spells it your way next time. To notice the fix, Purl reads the text field it pasted into for up to 90 seconds after pasting (less once you stop editing). Password fields are never read, and you can turn this off in Settings.</p>
         <p class="warn-text hidden" id="fn-error" role="alert"></p>
         <div class="modal-foot">
           <button id="fn-dismiss" class="btn btn-primary" type="button">Got it</button>
