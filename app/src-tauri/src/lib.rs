@@ -15,6 +15,7 @@ mod stats;
 mod structure;
 mod transcribe;
 mod transforms;
+mod untrusted;
 mod voice_commands;
 mod whisper_server;
 
