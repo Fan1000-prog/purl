@@ -41,3 +41,10 @@ core-graphics = "0.24"
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.61", features = ["Win32_Foundation", "Win32_NetworkManagement_IpHelper", "Win32_Networking_WinSock", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Registry", "Win32_System_Threading", "Win32_UI_Input_KeyboardAndMouse"] }
+
+# transcribe-rs 0.3.12 ignores Parakeet's TDT duration head, so it can emit
+# one token up to 10 times on a frame ("Francis X X X … Xavier"). This is
+# 0.3.12 plus upstream PR cjpais/transcribe-rs#90, pinned by commit. Drop it
+# once a release includes that PR.
+[patch.crates-io]
+transcribe-rs = { git = "https://github.com/Fan1000-prog/transcribe-rs", rev = "6e5a7d08e75a1a9db2f9bde12e113a108593ab13" }
