@@ -824,18 +824,19 @@ fn run_transform_pipeline(app: &AppHandle, t: &transforms::Transform) -> Result<
     };
 
     // The selection is still highlighted in the target app, so the paste
-    // replaces it in place. If the paste fails, `inject` leaves the result on
-    // the clipboard; keep it there rather than restoring the old clipboard.
+    // replaces it in place. If the paste keystroke fails, `inject` leaves the
+    // result on the clipboard; keep it there rather than restoring the old
+    // clipboard. A clipboard error means the result never got there.
     if let Err(e) = inject::inject(&out) {
+        let on_clipboard = !matches!(e, inject::InjectError::Clipboard(_));
         log_line(
             app,
-            &format!("transform paste FAILED: {e} -> clipboard fallback"),
+            &format!("transform paste FAILED: {e} (result on clipboard: {on_clipboard})"),
         );
-        return Err(format!(
-            "Couldn't paste the {} result, so it's on your clipboard — paste with {}.",
-            t.name,
-            platform::PASTE_SHORTCUT
-        ));
+        if !on_clipboard {
+            inject::restore_clipboard(&previous);
+        }
+        return Err(transform_paste_error(&t.name, on_clipboard));
     }
     inject::restore_clipboard(&previous);
 
@@ -850,6 +851,19 @@ fn run_transform_pipeline(app: &AppHandle, t: &transforms::Transform) -> Result<
         ),
     );
     Ok(())
+}
+
+/// What to tell the user when a transform's result couldn't be pasted,
+/// depending on whether it was left on the clipboard.
+fn transform_paste_error(name: &str, on_clipboard: bool) -> String {
+    if on_clipboard {
+        format!(
+            "Couldn't paste the {name} result, so it's on your clipboard — paste with {}.",
+            platform::PASTE_SHORTCUT
+        )
+    } else {
+        format!("Couldn't paste the {name} result: the clipboard isn't working. Your text is unchanged.")
+    }
 }
 
 /// How a dictation reached the user in paste mode.
@@ -1938,6 +1952,20 @@ mod pipeline_end_state_tests {
         ] {
             assert_eq!(pipeline_end_state(&Err(e.into())), "error");
         }
+    }
+}
+
+#[cfg(test)]
+mod transform_paste_error_tests {
+    use super::transform_paste_error;
+
+    #[test]
+    fn says_the_result_is_on_the_clipboard_only_when_it_is() {
+        let kept = transform_paste_error("Polish", true);
+        assert!(kept.contains("it's on your clipboard"), "{kept}");
+        let lost = transform_paste_error("Polish", false);
+        assert!(!lost.contains("on your clipboard"), "{lost}");
+        assert!(lost.contains("Your text is unchanged"), "{lost}");
     }
 }
 
