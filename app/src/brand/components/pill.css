@@ -1,0 +1,208 @@
+/* Dictation pill. Always dark: it floats over other apps and over the page.
+   The host reserves its box, so the capsule can morph width inside it
+   without moving anything around it. Driven by pill.ts. */
+
+.purl-pill {
+  --pill-h: 54px;
+  --pill-reserve: 340px;  /* widest state; set per use if needed */
+  --pill-body: #17130F;
+  --pill-pad-l: 50px;     /* tick glyph + gap */
+  --pill-pad-r: 20px;
+  --pill-bar-gap: 3px;
+  --pill-timer-gap: var(--space-6);
+
+  position: relative;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  width: min(100%, var(--pill-reserve));
+  height: var(--pill-h);
+  font-family: var(--font-ui);
+  font-size: var(--text-base);
+  font-weight: 500;
+  letter-spacing: var(--tracking-ui);
+  line-height: 1;
+  color: var(--text);
+}
+
+.purl-pill__shell {
+  position: relative;
+  height: 100%;
+  width: var(--pill-w, 150px);
+  max-width: 100%;
+  padding: 1.5px;
+  border-radius: var(--radius-pill);
+  overflow: hidden;
+  isolation: isolate;
+  background: rgb(247 241 232 / 0.1);
+  box-shadow: var(--shadow-float);
+  transition:
+    width var(--dur-morph) var(--ease-spring),
+    background-color var(--dur-base) var(--ease-out);
+}
+.purl-pill[data-state="listening"] .purl-pill__shell { background-color: rgb(247 241 232 / 0.16); }
+.purl-pill[data-state="error"] .purl-pill__shell { background-color: rgb(236 138 90 / 0.45); }
+.purl-pill[data-state="warning"] .purl-pill__shell { background-color: rgb(243 211 107 / 0.35); }
+
+/* Compact: listening fits in 300px, for phones and tight overlays. */
+.purl-pill--compact {
+  --pill-reserve: 300px;
+  --pill-bar-gap: 2px;
+  --pill-timer-gap: var(--space-4);
+}
+
+/* Spectrum border: a conic square spinning behind the body (polishing only). */
+.purl-pill__spin {
+  position: absolute;
+  z-index: -1;
+  left: 50%;
+  top: 50%;
+  width: 120%;
+  aspect-ratio: 1;
+  translate: -50% -50%;
+  background: var(--spectrum-conic);
+  opacity: 0;
+  transition: opacity var(--dur-base) var(--ease-out);
+}
+.purl-pill[data-state="polishing"] .purl-pill__spin {
+  opacity: 1;
+  animation: purl-spin var(--dur-spin) linear infinite;
+}
+
+.purl-pill__body {
+  position: relative;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--pill-body);
+  box-shadow: var(--inset-highlight);
+  overflow: hidden;
+}
+
+.purl-pill__tick {
+  position: absolute;
+  left: 17px;
+  top: 50%;
+  width: 22px;
+  height: 22px;
+  translate: 0 -50%;
+}
+.purl-pill__tick circle {
+  transform-box: fill-box;
+  transform-origin: center;
+  scale: calc(1 + var(--lvl, 0) * 0.28);
+}
+.purl-pill__tick path { opacity: 1; }
+.purl-pill[data-state="listening"] .purl-pill__tick path { opacity: calc(0.45 + var(--lvl, 0) * 0.55); }
+
+.purl-pill__layer {
+  position: absolute;
+  left: var(--pill-pad-l);
+  top: 50%;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  width: max-content;
+  max-width: calc(var(--pill-reserve) - var(--pill-pad-l) - var(--pill-pad-r));
+  translate: 0 -50%;
+  white-space: nowrap;
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity var(--dur-base) var(--ease-out),
+    visibility 0s linear var(--dur-base);
+}
+.purl-pill[data-state="idle"] [data-layer="idle"],
+.purl-pill[data-state="listening"] [data-layer="listening"],
+.purl-pill[data-state="polishing"] [data-layer="polishing"],
+.purl-pill[data-state="sent"] [data-layer="sent"],
+.purl-pill[data-state="error"] [data-layer="error"],
+.purl-pill[data-state="warning"] [data-layer="warning"] {
+  opacity: 1;
+  visibility: visible;
+  transition-delay: 120ms, 0s;
+}
+
+/* idle */
+.purl-pill__hold { color: var(--muted); }
+.purl-pill__keys { display: inline-flex; gap: var(--space-1); margin-left: var(--space-1); }
+
+/* listening */
+.purl-pill__bars {
+  display: flex;
+  align-items: center;
+  gap: var(--pill-bar-gap);
+  height: 42px;
+  margin-left: 2px;
+}
+.purl-pill__bars i {
+  display: block;
+  width: 3px;
+  height: var(--h, 4px);
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--sprout) calc(var(--e, 0) * 100%), var(--cream));
+}
+.purl-pill__timer {
+  margin-left: var(--pill-timer-gap);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  font-weight: 400;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+/* polishing */
+.purl-pill__shimmer {
+  background: linear-gradient(90deg, var(--cream) 0%, var(--cream) 30%, var(--butter) 45%, var(--ember) 55%, var(--cream) 70%, var(--cream) 100%);
+  background-size: 300% 100%;
+  background-position: 100% 0;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+.purl-pill[data-state="polishing"] .purl-pill__shimmer {
+  animation: purl-shimmer var(--dur-shimmer) linear infinite;
+}
+
+/* sent */
+.purl-pill__check { flex: none; }
+.purl-pill__check circle { fill: var(--signal); }
+.purl-pill__check path {
+  fill: none;
+  stroke: var(--night);
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-dasharray: 14;
+  stroke-dashoffset: 0;
+}
+.purl-pill[data-state="sent"] .purl-pill__check path {
+  animation: purl-draw var(--dur-slow) var(--ease-out) both;
+}
+
+/* error / warning: one short line */
+.purl-pill__msg,
+.purl-pill__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
+[data-layer="error"] { color: var(--warn-text); }
+[data-layer="error"] .purl-pill__msg { color: var(--text); }
+[data-layer="warning"] { color: var(--accent); }
+[data-layer="warning"] .purl-pill__msg { color: var(--text); }
+.purl-pill__icon { flex: none; }
+
+@keyframes purl-spin { to { rotate: 360deg; } }
+@keyframes purl-shimmer { from { background-position: 100% 0; } to { background-position: 0% 0; } }
+@keyframes purl-draw { from { stroke-dashoffset: 14; } to { stroke-dashoffset: 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .purl-pill__shell,
+  .purl-pill__spin,
+  .purl-pill__layer { transition: none; }
+  .purl-pill[data-state] .purl-pill__spin,
+  .purl-pill[data-state] .purl-pill__shimmer,
+  .purl-pill[data-state] .purl-pill__check path { animation: none; }
+  .purl-pill[data-state="polishing"] .purl-pill__spin { rotate: 200deg; }
+  .purl-pill__shimmer { background-position: 50% 0; }
+}

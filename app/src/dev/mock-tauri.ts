@@ -84,6 +84,7 @@ function install() {
     model("qwen3.5-4b", "Qwen3.5 4B (smart cleanup, larger)", 3_013_027_808, "llm"),
   ];
   const timers = new Map<string, ReturnType<typeof setInterval>>();
+  let recording: ReturnType<typeof setInterval> | undefined;
   const engine: EngineStatusView = {
     stt: allReady ? { state: "ready" } : { state: "missing" },
     llm: { state: "idle" },
@@ -249,7 +250,37 @@ function install() {
       settings.hotkey = newHotkey;
       return null;
     },
-    toggle_recording: () => null,
+    cancel_dictation: () => {
+      clearInterval(recording);
+      recording = undefined;
+      emit("audio-level", 0);
+      emit("state", "idle");
+      return null;
+    },
+    toggle_recording: () => {
+      // Start / stop a fake dictation so the orb and pill can be previewed:
+      // speech-like mic levels while recording, then polishing, then a result.
+      if (!recording) {
+        recording = setInterval(() => {
+          const t = performance.now() / 1000;
+          const syllables = Math.max(0, Math.sin(t * 9) * Math.sin(t * 2.3));
+          emit("audio-level", 0.01 + 0.12 * syllables * (0.6 + 0.4 * Math.random()));
+        }, 50);
+        emit("state", "recording");
+        return null;
+      }
+      clearInterval(recording);
+      recording = undefined;
+      emit("audio-level", 0);
+      emit("state", "processing");
+      setTimeout(() => {
+        const text = "Can we move the standup to 10 tomorrow?";
+        history.push({ ts: Math.floor(Date.now() / 1000), raw: "um can we move the standup to ten tomorrow", cleaned: text, used_llm: false, record_ms: 2500, transcribe_ms: 200, cleanup_ms: 1, words: 8 });
+        emit("result", { raw: "um can we move the standup to ten tomorrow", cleaned: text, used_llm: false, note: null, transcribe_ms: 200, cleanup_ms: 1 });
+        emit("state", "idle");
+      }, 1400);
+      return null;
+    },
     "plugin:app|version": () => q.get("version") ?? "0.9.0",
     "plugin:updater|check": () => null,
   };

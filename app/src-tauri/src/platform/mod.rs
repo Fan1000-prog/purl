@@ -143,7 +143,6 @@ pub fn hide_from_app_switcher(window: &tauri::WebviewWindow) {
 
 /// Where a bundled sidecar binary lives: `<resources>/llama/<name>`, with
 /// `.exe` on Windows.
-#[allow(dead_code)] // llama-server sidecar (plan Task 6) is the caller.
 pub fn sidecar_path(resource_dir: &Path, name: &str) -> PathBuf {
     let file = if cfg!(windows) {
         format!("{name}.exe")

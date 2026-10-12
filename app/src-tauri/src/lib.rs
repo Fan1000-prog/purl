@@ -11,6 +11,7 @@ mod inject;
 mod learned;
 mod overlay_pos;
 mod platform;
+mod secure_random;
 mod settings;
 pub mod smoke;
 mod snippets;
@@ -31,6 +32,7 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use tauri_plugin_notification::NotificationExt;
 
 use audio::Recorder;
+use engine::llm::{LlamaServerEngine, LlmEngine};
 use engine::stt::{ParakeetEngine, SttEngine};
 use settings::{CleanupMode, InjectMode, Settings};
 
@@ -67,6 +69,9 @@ struct AppState {
     /// In-process speech engine. Set once in `setup`, where the app-data
     /// dir that holds its model is first known.
     stt: OnceLock<Arc<ParakeetEngine>>,
+    /// Smart cleanup and transforms (llama-server sidecar). Set once in
+    /// `setup`, like `stt`.
+    llm: OnceLock<Arc<LlamaServerEngine>>,
 }
 
 #[derive(Default)]
@@ -251,7 +256,7 @@ fn position_overlay(overlay: &tauri::WebviewWindow) {
     let pill = overlay
         .outer_size()
         .map(|s| (s.width as f64 / wscale, s.height as f64 / wscale))
-        .unwrap_or((200.0, 82.0));
+        .unwrap_or((420.0, 100.0));
     let (x, y) = overlay_pos::pill_origin(overlay_pos::DESKTOP, work, monitor.scale_factor(), pill);
     // macOS positions are global points. Windows positions are global pixels:
     // a LogicalPosition there would be converted with the window's *current*
@@ -300,9 +305,9 @@ const OVERLAY_HIT_MARGIN: f64 = 6.0;
 
 /// Keep the pill click-through except while the cursor is actually over it.
 ///
-/// The overlay window (200x82 pt) is much bigger than the control it draws —
-/// a 36 pt mic when idle — because it also has room for the recording pill and
-/// the celebration toast. A normal window swallows mouse events across its
+/// The overlay window (420x100 pt) is much bigger than the control it draws —
+/// a ~170 pt "Press ⌘⇧Space" pill when idle — because it also has room for the
+/// recording pill with its ✕ and ✓ buttons and for captions. A normal window swallows mouse events across its
 /// whole rect, not just where pixels are drawn, so the empty space around the
 /// mic became an invisible dead zone: the pill is always-on-top and parked
 /// bottom-center, exactly where apps like Google Meet put their control bar,
@@ -655,10 +660,17 @@ fn start_dictation(app: &AppHandle) {
             *state.recording_started.lock().unwrap() = Some(std::time::Instant::now());
             set_state(app, "recording");
             spawn_level_emitter(app.clone(), level);
-            // Reloads the speech model if it was dropped for idleness;
-            // it loads while they talk.
+            // Reloads the speech model if it was dropped for idleness, and
+            // starts the Smart server if it will be needed; both load while
+            // they talk.
             let warm_app = app.clone();
-            std::thread::spawn(move || warm_speech(&warm_app.state::<AppState>()));
+            let smart = state.settings.lock().unwrap().cleanup_mode == CleanupMode::Smart;
+            std::thread::spawn(move || {
+                warm_speech(&warm_app.state::<AppState>());
+                if smart {
+                    llm(&warm_app).warm();
+                }
+            });
         }
         Err(e) => {
             set_state(app, "idle");
@@ -799,7 +811,7 @@ fn run_transform_pipeline(app: &AppHandle, t: &transforms::Transform) -> Result<
         return Err("Select some text first, then press the transform hotkey.".into());
     };
 
-    let attempt = transforms::run(&text, &t.prompt);
+    let attempt = transforms::run(&*llm(app), &text, &t.prompt);
     let out = match attempt {
         Ok(o) => o,
         Err(e) => {
@@ -920,11 +932,21 @@ fn run_pipeline(app: &AppHandle, recorder: Recorder, record_ms: u64) -> Result<(
             used_llm: false,
             note: None,
         },
-        CleanupMode::Smart => cleanup::CleanResult {
-            text: fastclean::clean(&raw, &dictionary),
-            used_llm: false,
-            note: Some("Smart cleanup isn't set up yet — used Fast".into()),
-        },
+        CleanupMode::Smart => {
+            // Learned corrections bias the model too; the prompt treats
+            // them as data (they were read out of other apps' fields).
+            let terms = dictionary
+                .with_extra_terms(&learned::glossary_terms(&rules))
+                .llm_terms();
+            cleanup::smart_clean(
+                &*llm(app),
+                &raw,
+                &terms,
+                settings.structure_mode,
+                smart_budget(&settings.smart_model),
+                || fastclean::clean(&raw, &dictionary),
+            )
+        }
     };
     let cleanup_ms = t1.elapsed().as_millis();
 
@@ -1114,7 +1136,18 @@ fn save_settings(app: AppHandle, new_settings: Settings) -> Result<(), String> {
     let state = app.state::<AppState>();
     let old_hotkey = state.settings.lock().unwrap().hotkey.clone();
     let new_hotkey = new_settings.hotkey.clone();
+    let smart_model = new_settings.smart_model.clone();
+    let smart_on = new_settings.cleanup_mode == CleanupMode::Smart;
     *state.settings.lock().unwrap() = new_settings;
+    // A different Smart model replaces the running server.
+    if let Some(path) = engine::llm::model_path(&app_support_dir(&app), &smart_model) {
+        if let Some(engine) = state.llm.get() {
+            engine.set_model(path);
+        }
+    }
+    if smart_on {
+        warm_smart(&state);
+    }
 
     if old_hotkey != new_hotkey {
         let gs = app.global_shortcut();
@@ -1515,6 +1548,19 @@ fn download_model(app: AppHandle, state: tauri::State<AppState>, id: String) -> 
         if result.is_ok() && spec.id == engine::stt::MODEL_ID {
             warm_speech(&app.state::<AppState>());
         }
+        if spec.kind == engine::models::Kind::Llm {
+            let _ = app.emit("engine-status", engine_status_view(&app));
+            let smart_on = app
+                .state::<AppState>()
+                .settings
+                .lock()
+                .unwrap()
+                .cleanup_mode
+                == CleanupMode::Smart;
+            if result.is_ok() && smart_on {
+                warm_smart(&app.state::<AppState>());
+            }
+        }
         let _ = app.emit("model-done", done);
     });
     Ok(())
@@ -1536,12 +1582,19 @@ fn delete_model(app: AppHandle, state: tauri::State<AppState>, id: String) -> Re
     if spec.id == engine::stt::MODEL_ID {
         release_speech_model(&state)?;
     }
+    let smart_model = state.settings.lock().unwrap().smart_model.clone();
+    if spec.id == smart_model {
+        release_smart_model(&state)?;
+    }
     let dir = engine::models::model_dir(&app_support_dir(&app), spec.id);
     match std::fs::remove_dir_all(&dir) {
         Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.to_string()),
         _ => {}
     }
     state.downloads.clear_error(spec.id);
+    if spec.kind == engine::models::Kind::Llm {
+        let _ = app.emit("engine-status", engine_status_view(&app));
+    }
     Ok(())
 }
 
@@ -1553,9 +1606,97 @@ fn engine_status(app: AppHandle) -> engine::EngineStatusView {
 fn engine_status_view(app: &AppHandle) -> engine::EngineStatusView {
     engine::EngineStatusView {
         stt: stt_status(app),
-        // The smart-cleanup engine arrives in Task 6.
-        llm: engine::EngineState::Missing,
+        llm: llm_status(app),
     }
+}
+
+/// Safe before `setup` has built the engine; reports Missing until then.
+fn llm_status(app: &AppHandle) -> engine::EngineState {
+    app.state::<AppState>()
+        .llm
+        .get()
+        .map_or(engine::EngineState::Missing, |e| e.status())
+}
+
+fn llm(app: &AppHandle) -> Arc<LlamaServerEngine> {
+    Arc::clone(
+        app.state::<AppState>()
+            .llm
+            .get()
+            .expect("smart engine is set in setup"),
+    )
+}
+
+/// Start the Smart server in the background. A no-op before `setup` has
+/// built the engine (a webview can save settings that early).
+fn warm_smart(state: &AppState) {
+    if let Some(engine) = state.llm.get() {
+        engine.warm();
+    }
+}
+
+/// Stop the Smart server so its model files can be deleted. Before `setup`
+/// has built the engine nothing is running, so there is nothing to release.
+fn release_smart_model(state: &AppState) -> Result<(), String> {
+    match state.llm.get() {
+        Some(engine) if !engine.release() => Err("Stop using this model first".into()),
+        _ => Ok(()),
+    }
+}
+
+/// The hard deadline for Smart cleanup: the larger model gets longer. On
+/// timeout the Fast result is pasted.
+fn smart_budget(smart_model: &str) -> std::time::Duration {
+    if smart_model == "qwen3.5-4b" {
+        std::time::Duration::from_secs(10)
+    } else {
+        std::time::Duration::from_secs(6)
+    }
+}
+
+/// Build the Smart engine on the bundled llama-server, reap a server a
+/// crashed Purl left behind, broadcast status changes, and stop the server
+/// after 5 idle minutes. With Smart on, the server starts now: the first
+/// start after an install or update takes 15-20 s on macOS (first-run
+/// checks of the new binary), longer than one dictation's budget.
+fn start_llm(app: &AppHandle) {
+    let app_data = app_support_dir(app);
+    let smart_model = app
+        .state::<AppState>()
+        .settings
+        .lock()
+        .unwrap()
+        .smart_model
+        .clone();
+    let model = engine::llm::model_path(&app_data, &smart_model)
+        .or_else(|| engine::llm::model_path(&app_data, settings::DEFAULT_SMART_MODEL))
+        .expect("the default Smart model is in the registry");
+    let bin = engine::sidecar::llama_server_path(&app.path().resource_dir().unwrap_or_default());
+    // Windows ties the server to a Job Object instead of a PID file.
+    let pid_file = cfg!(unix).then(|| app_data.join("llama.pid"));
+    if let Some(pid_file) = &pid_file {
+        engine::sidecar::reap_stale(pid_file);
+    }
+    let engine = LlamaServerEngine::new(bin, model, pid_file);
+    let emit_app = app.clone();
+    engine.set_listener(Box::new(move || {
+        let _ = emit_app.emit("engine-status", engine_status_view(&emit_app));
+    }));
+    let _ = app.state::<AppState>().llm.set(Arc::clone(&engine));
+    let smart_on = app
+        .state::<AppState>()
+        .settings
+        .lock()
+        .unwrap()
+        .cleanup_mode
+        == CleanupMode::Smart;
+    if smart_on {
+        engine.warm();
+    }
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_secs(60));
+        engine.stop_if_idle(std::time::Duration::from_secs(5 * 60));
+    });
 }
 
 /// Safe to call before `setup` has built the engine (a webview can ask
@@ -1724,6 +1865,7 @@ pub fn run() {
             // Load the speech model now so the first dictation doesn't pay
             // the model-load cost.
             start_stt(app.handle());
+            start_llm(app.handle());
 
             // The voice pill is a persistent fixture from launch, parked on
             // whichever display currently has the cursor, and follows it
@@ -1752,13 +1894,21 @@ pub fn run() {
                 api.prevent_close();
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            // Quit stops the Smart server so it can't outlive the app.
+            if let tauri::RunEvent::Exit = event {
+                if let Some(llm) = app.state::<AppState>().llm.get() {
+                    llm.shutdown();
+                }
+            }
+        });
 }
 
 #[cfg(test)]
 mod speech_engine_access_tests {
-    use super::{release_speech_model, warm_speech, AppState};
+    use super::{release_smart_model, release_speech_model, warm_smart, warm_speech, AppState};
 
     /// A webview can call download/delete before `setup` builds the engine.
     #[test]
@@ -1766,6 +1916,8 @@ mod speech_engine_access_tests {
         let state = AppState::default();
         warm_speech(&state);
         assert_eq!(release_speech_model(&state), Ok(()), "nothing loaded yet");
+        warm_smart(&state);
+        assert_eq!(release_smart_model(&state), Ok(()), "no server yet");
     }
 }
 
