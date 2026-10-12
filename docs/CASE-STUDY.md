@@ -30,8 +30,8 @@ Over the next six weeks it grew, one release at a time:
 |---|---|
 | 2026-07-03 | First version: hold-to-talk, local transcription, one-command installer |
 | 2026-07-05 | The speech model stays loaded, instead of loading on every dictation |
-| 2026-07-14 | Voice commands and writing modes (Email, Coding) |
-| 2026-07-16 | Transforms: rewrite selected text with a hotkey |
+| 2026-07-14 | Voice commands and the Email writing mode |
+| 2026-07-16 | Coding writing mode, and Transforms: rewrite selected text with a hotkey |
 | 2026-07-17 | v0.4.0, the first release that updates itself |
 | 2026-07-18 | v0.5.0, one build for Intel and Apple Silicon Macs |
 | 2026-07-30 | Optional cloud cleanup with your own API key |
