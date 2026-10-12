@@ -259,20 +259,14 @@ impl LlamaServerEngine {
     }
 
     /// Stop the server so its model file can be deleted. False while it is
-    /// starting or answering a request.
+    /// starting or answering a request. The check and the stop share one
+    /// lock, so a dictation can't take the server in between.
     pub fn release(&self) -> bool {
-        let busy = {
-            let slot = self.slot.lock().unwrap();
-            match &slot.phase {
-                Phase::Starting => true,
-                Phase::Running(s) => Arc::strong_count(s) > 1,
-                _ => false,
-            }
-        };
-        if !busy {
-            self.stop_when(|_| true);
-        }
-        !busy
+        self.stop_when(|slot| match &slot.phase {
+            Phase::Starting => false,
+            Phase::Running(s) => Arc::strong_count(s) == 1,
+            _ => true,
+        })
     }
 
     /// Stop the server now, whatever it is doing. For app exit.
@@ -280,12 +274,16 @@ impl LlamaServerEngine {
         self.stop_when(|_| true);
     }
 
-    /// Stop (and forget any failure) when `should` says so.
-    fn stop_when(&self, should: impl FnOnce(&Slot) -> bool) {
+    /// Stop (and forget any failure) when `should` says so. True when the
+    /// server is stopped afterwards, including when it already was.
+    fn stop_when(&self, should: impl FnOnce(&Slot) -> bool) -> bool {
         let old = {
             let mut slot = self.slot.lock().unwrap();
-            if matches!(slot.phase, Phase::Stopped) || !should(&slot) {
-                return;
+            if matches!(slot.phase, Phase::Stopped) {
+                return true;
+            }
+            if !should(&slot) {
+                return false;
             }
             slot.generation += 1;
             std::mem::replace(&mut slot.phase, Phase::Stopped)
@@ -294,6 +292,7 @@ impl LlamaServerEngine {
         drop(old);
         self.started.notify_all();
         self.notify();
+        true
     }
 
     /// Stopped/Failed + installed → Starting. Returns what to start when
@@ -639,6 +638,39 @@ pub(crate) mod tests {
         assert!(h.dropped.load(Ordering::SeqCst));
         h.engine.complete("s", "u", BUDGET).unwrap();
         h.engine.shutdown();
+        assert_eq!(h.engine.status(), EngineState::Idle);
+    }
+
+    #[test]
+    fn release_waits_for_a_request_in_flight() {
+        let h = harness(0, false, "Hello.", false);
+        h.engine.complete("s", "u", BUDGET).unwrap();
+        // A dictation holds the server, as `complete` does mid-request.
+        let in_flight = h.engine.acquire(Instant::now() + BUDGET).unwrap();
+        assert!(!h.engine.release(), "released mid-request");
+        assert!(!h.dropped.load(Ordering::SeqCst));
+        assert_eq!(h.engine.status(), EngineState::Ready);
+        drop(in_flight);
+        assert!(h.engine.release());
+        assert!(h.dropped.load(Ordering::SeqCst));
+        assert!(h.engine.release(), "already stopped counts as released");
+    }
+
+    #[test]
+    fn release_refuses_while_starting() {
+        let h = harness(300, false, "Hello.", false);
+        h.engine.warm();
+        assert_eq!(h.engine.status(), EngineState::Loading);
+        assert!(!h.engine.release());
+        assert_eq!(h.engine.status(), EngineState::Loading);
+    }
+
+    #[test]
+    fn release_clears_a_failed_start() {
+        let h = harness(0, true, "", false);
+        let _ = h.engine.complete("s", "u", BUDGET);
+        assert!(matches!(h.engine.status(), EngineState::Failed { .. }));
+        assert!(h.engine.release());
         assert_eq!(h.engine.status(), EngineState::Idle);
     }
 
