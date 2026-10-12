@@ -1,7 +1,8 @@
 # Purl guide
 
 How to set up Purl and get the most out of it. To install it first, see the
-[README](../README.md#install).
+[README](../README.md#install). If macOS or Windows blocks the first open,
+see [First open](RELEASING.md#first-open-macos-and-windows).
 
 ## First run
 

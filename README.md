@@ -24,7 +24,8 @@ Purl runs on **macOS with Apple Silicon** (M1 or newer) and **Windows 10/11
 x64**. Intel Macs aren't supported yet.
 
 The installers are not signed by Apple or Microsoft yet, so both systems
-warn you the first time you open Purl. The steps below get you past that.
+warn you the first time you open Purl. The steps below get you past that
+(they're also in [docs/RELEASING.md](docs/RELEASING.md#first-open-macos-and-windows)).
 
 ### macOS (Apple Silicon)
 
