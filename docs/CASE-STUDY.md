@@ -90,7 +90,7 @@ Purl is the rebuild, started on 2026-10-09:
 | Speech-to-text | whisper.cpp base.en, a separate server process | Parakeet v3, inside the app (transcribe-rs on ONNX Runtime) |
 | Cleanup | Fast rules, or Ollama, or a cloud model with your key | Off, Fast, or Smart (Qwen3.5 on a bundled `llama-server`) |
 | Network | Ollama on localhost, update check, cloud provider if you opted in | Model downloads and the update check, nothing else |
-| Field reading for learning | 30 seconds after a paste | up to 90 seconds after pasting (less once you stop editing) |
+| Field reading for learning | up to 90 seconds (the app said 30) | up to 90 seconds after pasting (less once you stop editing) |
 | Licence | Internal | MIT |
 
 What changed under the hood:
