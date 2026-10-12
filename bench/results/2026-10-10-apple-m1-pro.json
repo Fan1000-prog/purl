@@ -1,0 +1,101 @@
+{
+  "cleanup": [
+    {
+      "calls": 10,
+      "inputs": "Parakeet transcripts of dictation_10",
+      "latency_ms_mean": 0.0032,
+      "latency_ms_p95": 0.0037,
+      "mode": "fast"
+    },
+    {
+      "mode": "smart",
+      "model": "Qwen3.5-2B Q4_K_M via llama-server",
+      "reason": "Smart cleanup (Task 6) is not merged; rerun the bench once it is",
+      "status": "not measured yet"
+    }
+  ],
+  "datasets": {
+    "dictation_10": {
+      "audio_secs": 76.1,
+      "clips": 10,
+      "source": "bench/dictation/manifest.tsv: dictation-style text read by macOS `say`",
+      "synthetic": true
+    },
+    "librispeech_100": {
+      "audio_secs": 901.1,
+      "clips": 100,
+      "licence": "CC-BY-4.0",
+      "source": "LibriSpeech test-clean, first 100 utterances by sorted id (openslr.org/resources/12)"
+    }
+  },
+  "date": "2026-10-10",
+  "machine": {
+    "arch": "aarch64",
+    "cores": 10,
+    "cpu": "Apple M1 Pro",
+    "load_avg_1m_at_end": 40.64,
+    "load_avg_1m_at_start": 2.91,
+    "os": "macOS 26.4.1",
+    "purl_commit": "e394ab8",
+    "ram_gb": 16
+  },
+  "method": {
+    "cold_load": "fresh process, model files possibly in the OS file cache from earlier runs",
+    "rtf": "processing time / audio duration per clip, lower is better; model already loaded",
+    "wer": "corpus WER (total word edits / total reference words) after lowercasing and stripping punctuation; numbers are not normalized"
+  },
+  "stt": [
+    {
+      "cold_load_ms": 828.3,
+      "config": "int8 ONNX, in-process via transcribe-rs (the app's engine), CPU",
+      "dictation_10": {
+        "clips": 10,
+        "rtf_mean": 0.0363,
+        "rtf_p95": 0.0388,
+        "wer": 0.0081
+      },
+      "engine": "parakeet-tdt-0.6b-v3",
+      "librispeech_100": {
+        "clips": 100,
+        "rtf_mean": 0.0394,
+        "rtf_p95": 0.0487,
+        "wer": 0.032
+      }
+    },
+    {
+      "cold_load_ms": 74.9,
+      "config": "Metal GPU (whisper-cli default), 10 threads, whisper.cpp version: 1.9.5",
+      "dictation_10": {
+        "clips": 10,
+        "rtf_mean": 0.0239,
+        "rtf_p95": 0.0306,
+        "wer": 0.0162
+      },
+      "engine": "whisper.cpp base.en",
+      "librispeech_100": {
+        "clips": 100,
+        "rtf_mean": 0.0249,
+        "rtf_p95": 0.0441,
+        "wer": 0.0286
+      }
+    },
+    {
+      "cold_load_ms": 60.6,
+      "config": "CPU only (-ng), 10 threads, whisper.cpp version: 1.9.5",
+      "dictation_10": {
+        "clips": 10,
+        "rtf_mean": 0.1789,
+        "rtf_p95": 0.2468,
+        "wer": 0.0162
+      },
+      "engine": "whisper.cpp base.en",
+      "librispeech_100": {
+        "clips": 100,
+        "rtf_mean": 0.3583,
+        "rtf_p95": 0.7139,
+        "wer": 0.0286
+      }
+    }
+  ],
+  "windows": "not measured yet"
+}
