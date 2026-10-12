@@ -96,6 +96,12 @@ pub(crate) trait Server: Send + Sync {
         body: &serde_json::Value,
         timeout: Duration,
     ) -> Result<serde_json::Value, ChatError>;
+
+    /// The server's process id, for tests that watch it die.
+    #[cfg(test)]
+    fn pid(&self) -> Option<u32> {
+        None
+    }
 }
 
 /// The real thing: a `llama-server` sidecar and an HTTP client for it.
@@ -130,6 +136,11 @@ impl Server for LlamaServer {
                 ChatError::Other(e.to_string())
             }
         })
+    }
+
+    #[cfg(test)]
+    fn pid(&self) -> Option<u32> {
+        Some(self.sidecar.lock().unwrap().pid())
     }
 }
 
@@ -795,8 +806,10 @@ pub(crate) mod tests {
         }
         assert_eq!(engine.status(), EngineState::Ready);
         eprintln!("llama-server ready in {:?}", t0.elapsed());
+        // This engine's own server: other real-model tests may run theirs
+        // alongside it.
         let pid = match &engine.slot.lock().unwrap().phase {
-            Phase::Running(_) => server_pid(),
+            Phase::Running(s) => s.pid().expect("a real server has a PID"),
             _ => unreachable!(),
         };
         engine.shutdown();
@@ -808,19 +821,6 @@ pub(crate) mod tests {
             );
             std::thread::sleep(Duration::from_millis(20));
         }
-    }
-
-    /// The one llama-server this test process started.
-    fn server_pid() -> u32 {
-        let out = std::process::Command::new("pgrep")
-            .args(["-P", &std::process::id().to_string(), "llama-server"])
-            .output()
-            .unwrap();
-        String::from_utf8(out.stdout)
-            .unwrap()
-            .trim()
-            .parse()
-            .unwrap()
     }
 
     fn process_alive(pid: u32) -> bool {
