@@ -1,6 +1,6 @@
 //! Windows: SendInput keystrokes. There is no permission to grant, but
 //! UIPI silently drops input aimed at an elevated window, which SendInput
-//! reports as fewer events inserted than sent.
+//! can report as fewer events inserted than sent (but doesn't always).
 
 use super::{TextInjector, Trust};
 use crate::inject::InjectError;

@@ -16,16 +16,14 @@ pub mod smoke;
 mod snippets;
 mod stats;
 mod structure;
-mod transcribe;
 mod transforms;
 mod untrusted;
 mod voice_commands;
-mod whisper_server;
 
 use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
 use tauri::{AppHandle, Emitter, Manager};
@@ -33,6 +31,7 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use tauri_plugin_notification::NotificationExt;
 
 use audio::Recorder;
+use engine::stt::{ParakeetEngine, SttEngine};
 use settings::{CleanupMode, InjectMode, Settings};
 
 /// Dictation is push-to-talk: hold the hotkey to record, release to
@@ -58,10 +57,6 @@ struct AppState {
     /// itself so its CSS stays the single source of truth. None while nothing
     /// it shows is interactive (e.g. the processing spinner).
     overlay_hit: Mutex<Option<[f64; 4]>>,
-    /// Resident whisper-server keeping the model in memory between
-    /// dictations. None when the binary is missing — transcription then
-    /// runs through the whisper-cli fallback.
-    whisper_server: Mutex<Option<whisper_server::WhisperServer>>,
     /// Bumped by every `spawn_correction_watch`. A watcher only drives the
     /// `watching-edits` indicator while its generation is still the newest —
     /// otherwise an older watcher that outlives a newer one could flip the
@@ -69,6 +64,9 @@ struct AppState {
     correction_watch_gen: std::sync::atomic::AtomicU64,
     /// Model downloads in flight, with their cancel flags and last errors.
     downloads: engine::Downloads,
+    /// In-process speech engine. Set once in `setup`, where the app-data
+    /// dir that holds its model is first known.
+    stt: OnceLock<Arc<ParakeetEngine>>,
 }
 
 #[derive(Default)]
@@ -91,9 +89,7 @@ struct TranscriptPayload {
 
 #[derive(Debug, Clone, Serialize)]
 struct StatusPayload {
-    whisper_bin_found: bool,
-    whisper_model_found: bool,
-    whisper_model_path: String,
+    stt: engine::EngineState,
     /// Whether a synthesized paste can reach other apps. `denied` means
     /// macOS Accessibility is missing and output goes to the clipboard.
     paste_trust: platform::Trust,
@@ -104,13 +100,16 @@ struct StatusPayload {
     state: String,
 }
 
-/// The platform-dependent part of `StatusPayload`, as a pure function. The
-/// speech-engine fields are filled in by `get_status`.
-fn status_payload_for(trust: platform::Trust, hotkey: &str, state: &str) -> StatusPayload {
+/// `StatusPayload` as a pure function of its inputs, so the platform fields
+/// can be tested without an `AppHandle`.
+fn status_payload_for(
+    stt: engine::EngineState,
+    trust: platform::Trust,
+    hotkey: &str,
+    state: &str,
+) -> StatusPayload {
     StatusPayload {
-        whisper_bin_found: false,
-        whisper_model_found: false,
-        whisper_model_path: String::new(),
+        stt,
         paste_trust: trust,
         learning_supported: platform::LEARNING_SUPPORTED,
         hotkey: hotkey.into(),
@@ -635,39 +634,6 @@ fn on_hotkey(app: &AppHandle, shortcut_state: ShortcutState) {
 }
 
 /// Begin recording (hotkey press, tray, or in-app button).
-/// Make sure a whisper-server is running for the current model: spawns one
-/// when missing, restarts after a crash or a model change. No-op when the
-/// binary isn't installed (whisper-cli fallback covers transcription).
-fn ensure_whisper_server(app: &AppHandle) {
-    let settings = app.state::<AppState>().settings.lock().unwrap().clone();
-    let model = settings.resolved_model_path(&app_support_dir(app));
-    let resource_dir = app.path().resource_dir().ok();
-    let Some(bin) = whisper_server::find_bin(resource_dir.as_deref()) else {
-        return;
-    };
-
-    let state = app.state::<AppState>();
-    let mut slot = state.whisper_server.lock().unwrap();
-    let needs_spawn = match slot.as_mut() {
-        Some(s) => !s.is_alive() || s.model != model,
-        None => true,
-    };
-    if !needs_spawn {
-        return;
-    }
-    *slot = None; // Drop (kills) any stale server before starting the new one.
-    match whisper_server::WhisperServer::spawn(&bin, &model, transcribe::thread_count()) {
-        Ok(s) => {
-            log_line(app, "whisper-server: started (model resident)");
-            *slot = Some(s);
-        }
-        Err(e) => log_line(
-            app,
-            &format!("whisper-server: spawn failed: {e} — using CLI"),
-        ),
-    }
-}
-
 fn start_dictation(app: &AppHandle) {
     let state = app.state::<AppState>();
 
@@ -689,10 +655,10 @@ fn start_dictation(app: &AppHandle) {
             *state.recording_started.lock().unwrap() = Some(std::time::Instant::now());
             set_state(app, "recording");
             spawn_level_emitter(app.clone(), level);
-            // Covers whisper-server crash/model-change since startup;
-            // spawning is instant and the model loads while they talk.
+            // Reloads the speech model if it was dropped for idleness;
+            // it loads while they talk.
             let warm_app = app.clone();
-            std::thread::spawn(move || ensure_whisper_server(&warm_app));
+            std::thread::spawn(move || warm_speech(&warm_app.state::<AppState>()));
         }
         Err(e) => {
             set_state(app, "idle");
@@ -736,13 +702,22 @@ fn stop_and_transcribe(app: &AppHandle) {
     std::thread::spawn(move || {
         let result = run_pipeline(&app, recorder, record_ms);
         drop(session);
-        set_state(&app, "idle");
+        set_state(&app, pipeline_end_state(&result));
         if let Err(e) = result {
             log_line(&app, &format!("pipeline ERROR: {e}"));
             let _ = app.emit("pipeline-error", e.clone());
             notify(&app, &e);
         }
     });
+}
+
+/// The `state` event that closes a dictation. The overlay flashes "Sent" or
+/// "Didn't catch that" for these and then settles back to idle by itself.
+fn pipeline_end_state(result: &Result<(), String>) -> &'static str {
+    match result {
+        Ok(()) => "done",
+        Err(_) => "error",
+    }
 }
 
 /// Discard the in-flight recording without transcribing.
@@ -834,10 +809,20 @@ fn run_transform_pipeline(app: &AppHandle, t: &transforms::Transform) -> Result<
     };
 
     // The selection is still highlighted in the target app, so the paste
-    // replaces it in place.
-    let paste = inject::inject(&out);
+    // replaces it in place. If the paste fails, `inject` leaves the result on
+    // the clipboard; keep it there rather than restoring the old clipboard.
+    if let Err(e) = inject::inject(&out) {
+        log_line(
+            app,
+            &format!("transform paste FAILED: {e} -> clipboard fallback"),
+        );
+        return Err(format!(
+            "Couldn't paste the {} result, so it's on your clipboard — paste with {}.",
+            t.name,
+            platform::PASTE_SHORTCUT
+        ));
+    }
     inject::restore_clipboard(&previous);
-    paste.map_err(|e| format!("Paste failed: {e}"))?;
 
     log_line(
         app,
@@ -852,6 +837,44 @@ fn run_transform_pipeline(app: &AppHandle, t: &transforms::Transform) -> Result<
     Ok(())
 }
 
+/// How a dictation reached the user in paste mode.
+#[derive(Debug, PartialEq)]
+enum Delivery {
+    /// Every text segment pasted and every command key sent.
+    Sent,
+    /// A paste or key failed (typically Windows UIPI: the target runs as
+    /// administrator), so the whole dictation went to the clipboard instead.
+    /// Holds the failure, for the log.
+    Copied(String),
+}
+
+/// Paste text segments and send command keys ("go down" → ↓) in order, with
+/// a short pause between them so the target app keeps up. On the first
+/// failure, stop and put the whole dictation (`full`) on the clipboard: the
+/// user gets all of it to paste by hand rather than half of it.
+fn deliver_segments(
+    segments: &[voice_commands::Segment],
+    full: &str,
+    paste: &mut dyn FnMut(&str) -> Result<(), inject::InjectError>,
+    key: &mut dyn FnMut(voice_commands::Key) -> Result<(), inject::InjectError>,
+    copy: &mut dyn FnMut(&str) -> Result<(), inject::InjectError>,
+) -> Result<Delivery, String> {
+    for (i, seg) in segments.iter().enumerate() {
+        if i > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(120));
+        }
+        let sent = match seg {
+            voice_commands::Segment::Text(t) => paste(t),
+            voice_commands::Segment::Key(k) => key(*k),
+        };
+        if let Err(e) = sent {
+            copy(full).map_err(|e| format!("Clipboard failed: {e}"))?;
+            return Ok(Delivery::Copied(e.to_string()));
+        }
+    }
+    Ok(Delivery::Sent)
+}
+
 /// stop recording → transcribe → clean → inject. Runs off the main thread.
 fn run_pipeline(app: &AppHandle, recorder: Recorder, record_ms: u64) -> Result<(), String> {
     let settings = app.state::<AppState>().settings.lock().unwrap().clone();
@@ -864,47 +887,21 @@ fn run_pipeline(app: &AppHandle, recorder: Recorder, record_ms: u64) -> Result<(
         Vec::new()
     };
 
-    let wav = recorder
-        .stop(&std::env::temp_dir())
+    let pcm = recorder
+        .stop_samples()
         .map_err(|e| format!("Recording failed: {e}"))?;
-
-    let model = settings.resolved_model_path(&support);
-    let resource_dir = app.path().resource_dir().ok();
-    let whisper_bin = match transcribe::find_whisper_bin(resource_dir.as_deref()) {
-        Ok(bin) => bin,
-        Err(e) => {
-            let _ = std::fs::remove_file(&wav);
-            return Err(e.to_string());
-        }
-    };
+    if pcm.len() < 16000 * 3 / 10 {
+        return Err("Didn't catch that — hold the key a little longer.".into());
+    }
 
     let t0 = std::time::Instant::now();
-    // Resident server first (model already in memory); whisper-cli covers
-    // server-missing, still-loading, and crashed cases.
-    let via_server = {
-        let state = app.state::<AppState>();
-        let slot = state.whisper_server.lock().unwrap();
-        slot.as_ref()
-            .filter(|s| s.model == model)
-            .map(|s| s.transcribe(&wav, ""))
-    };
-    let raw = match via_server {
-        Some(Ok(text)) => {
-            log_line(app, "transcribe: via resident whisper-server");
-            Ok(text)
-        }
-        Some(Err(e)) => {
-            log_line(
-                app,
-                &format!("transcribe: server failed ({e}) -> CLI fallback"),
-            );
-            transcribe::transcribe(&wav, &model, &whisper_bin, "").map_err(|e| e.to_string())
-        }
-        None => transcribe::transcribe(&wav, &model, &whisper_bin, "").map_err(|e| e.to_string()),
-    };
-    // Audio never persists past transcription.
-    let _ = std::fs::remove_file(&wav);
-    let raw = raw.map_err(|e| format!("Transcription failed: {e}"))?;
+    let stt = app
+        .state::<AppState>()
+        .stt
+        .get()
+        .cloned()
+        .ok_or("The speech engine is still starting. Try again in a moment.")?;
+    let raw = stt.transcribe(&pcm).map_err(|e| e.to_string())?;
     let transcribe_ms = t0.elapsed().as_millis();
 
     if raw.trim().is_empty() {
@@ -992,30 +989,24 @@ fn run_pipeline(app: &AppHandle, recorder: Recorder, record_ms: u64) -> Result<(
                     "Copied to clipboard (Purl was focused). Use the hotkey from your target app to paste automatically.",
                 );
             } else if paste_trust.can_paste() {
-                // Walk the segments in order: paste text, synthesize command
-                // keystrokes ("go down" → ↓). A short pause after each key
-                // lets the target app process it before the next paste.
-                for (i, seg) in segments.iter().enumerate() {
-                    if i > 0 {
-                        std::thread::sleep(std::time::Duration::from_millis(120));
-                    }
-                    let sent = match seg {
-                        voice_commands::Segment::Text(t) => {
-                            log_line(app, "inject: pasting via Cmd-V");
-                            inject::inject(t)
-                        }
-                        voice_commands::Segment::Key(k) => {
-                            log_line(app, &format!("inject: voice command key {k:?}"));
-                            platform::injector().send_key(*k)
-                        }
-                    };
-                    if let Err(e) = sent {
-                        // Typically Windows UIPI: the target runs as
-                        // administrator. Hand the user the whole dictation
-                        // to paste themselves rather than half of it.
+                let mut paste = |t: &str| {
+                    log_line(app, "inject: pasting via Cmd-V");
+                    inject::inject(t)
+                };
+                let mut key = |k: voice_commands::Key| {
+                    log_line(app, &format!("inject: voice command key {k:?}"));
+                    platform::injector().send_key(k)
+                };
+                match deliver_segments(
+                    &segments,
+                    &expanded,
+                    &mut paste,
+                    &mut key,
+                    &mut inject::copy_to_clipboard,
+                )? {
+                    Delivery::Sent => log_line(app, "inject: all segments sent OK"),
+                    Delivery::Copied(e) => {
                         log_line(app, &format!("inject: FAILED: {e} -> clipboard fallback"));
-                        inject::copy_to_clipboard(&expanded)
-                            .map_err(|e| format!("Clipboard failed: {e}"))?;
                         notify(
                             app,
                             &format!(
@@ -1024,11 +1015,7 @@ fn run_pipeline(app: &AppHandle, recorder: Recorder, record_ms: u64) -> Result<(
                             ),
                         );
                         paste_failed = true;
-                        break;
                     }
-                }
-                if !paste_failed {
-                    log_line(app, "inject: all segments sent OK");
                 }
             } else {
                 log_line(
@@ -1340,9 +1327,6 @@ fn apply_transforms(app: &AppHandle, list: Vec<transforms::Transform>) -> Result
 #[tauri::command]
 fn get_status(app: AppHandle, state: tauri::State<AppState>) -> StatusPayload {
     let settings = state.settings.lock().unwrap().clone();
-    let support = app_support_dir(&app);
-    let model_path = settings.resolved_model_path(&support);
-    let resource_dir = app.path().resource_dir().ok();
     let app_state = if state.recorder.lock().unwrap().is_some() {
         "recording"
     } else if state.processing.load(Ordering::SeqCst) {
@@ -1350,16 +1334,12 @@ fn get_status(app: AppHandle, state: tauri::State<AppState>) -> StatusPayload {
     } else {
         "idle"
     };
-    StatusPayload {
-        whisper_bin_found: transcribe::find_whisper_bin(resource_dir.as_deref()).is_ok(),
-        whisper_model_found: model_path.is_file(),
-        whisper_model_path: model_path.display().to_string(),
-        ..status_payload_for(
-            platform::injector().can_inject(),
-            &settings.hotkey,
-            app_state,
-        )
-    }
+    status_payload_for(
+        stt_status(&app),
+        platform::injector().can_inject(),
+        &settings.hotkey,
+        app_state,
+    )
 }
 
 /// Microphone permission: `granted`, `denied`, or `not_required` (macOS
@@ -1395,7 +1375,7 @@ fn set_overlay_hit_rect(app: AppHandle, rect: Option<[f64; 4]>) {
 
 #[tauri::command]
 fn get_glossary(app: AppHandle) -> String {
-    std::fs::read_to_string(dictionary_path(&app)).unwrap_or_default()
+    dictionary::read_text(&dictionary_path(&app))
 }
 
 #[tauri::command]
@@ -1532,6 +1512,9 @@ fn download_model(app: AppHandle, state: tauri::State<AppState>, id: String) -> 
             ),
         );
         app.state::<AppState>().downloads.finish(spec.id, &result);
+        if result.is_ok() && spec.id == engine::stt::MODEL_ID {
+            warm_speech(&app.state::<AppState>());
+        }
         let _ = app.emit("model-done", done);
     });
     Ok(())
@@ -1542,14 +1525,16 @@ fn cancel_download(state: tauri::State<AppState>, id: String) {
     state.downloads.cancel(&id);
 }
 
-/// Removes a model's folder, `.part` files included. Engines register the
-/// models they have loaded in Tasks 5/6; until then only an in-flight
-/// download blocks deletion.
+/// Removes a model's folder, `.part` files included. Refused while the model
+/// is downloading, or while its engine is loading or using it.
 #[tauri::command]
 fn delete_model(app: AppHandle, state: tauri::State<AppState>, id: String) -> Result<(), String> {
     let spec = engine::models::find(&id).ok_or_else(|| format!("Unknown model {id}"))?;
     if state.downloads.is_running(spec.id) {
         return Err("Cancel the download first".into());
+    }
+    if spec.id == engine::stt::MODEL_ID {
+        release_speech_model(&state)?;
     }
     let dir = engine::models::model_dir(&app_support_dir(&app), spec.id);
     match std::fs::remove_dir_all(&dir) {
@@ -1558,6 +1543,62 @@ fn delete_model(app: AppHandle, state: tauri::State<AppState>, id: String) -> Re
     }
     state.downloads.clear_error(spec.id);
     Ok(())
+}
+
+#[tauri::command]
+fn engine_status(app: AppHandle) -> engine::EngineStatusView {
+    engine_status_view(&app)
+}
+
+fn engine_status_view(app: &AppHandle) -> engine::EngineStatusView {
+    engine::EngineStatusView {
+        stt: stt_status(app),
+        // The smart-cleanup engine arrives in Task 6.
+        llm: engine::EngineState::Missing,
+    }
+}
+
+/// Safe to call before `setup` has built the engine (a webview can ask
+/// that early); reports Loading until then.
+fn stt_status(app: &AppHandle) -> engine::EngineState {
+    app.state::<AppState>()
+        .stt
+        .get()
+        .map_or(engine::EngineState::Loading, |e| e.status())
+}
+
+/// Load the speech model in the background. A no-op before `setup` has
+/// built the engine.
+fn warm_speech(state: &AppState) {
+    if let Some(engine) = state.stt.get() {
+        engine.warm();
+    }
+}
+
+/// Let go of the speech model so its files can be deleted. Before `setup`
+/// has built the engine nothing is loaded, so there is nothing to release.
+fn release_speech_model(state: &AppState) -> Result<(), String> {
+    match state.stt.get() {
+        Some(engine) if !engine.release() => Err("Stop using this model first".into()),
+        _ => Ok(()),
+    }
+}
+
+/// Build the speech engine, broadcast its status changes, start loading
+/// the model, and drop it after 15 idle minutes.
+fn start_stt(app: &AppHandle) {
+    let dir = engine::models::model_dir(&app_support_dir(app), engine::stt::MODEL_ID);
+    let engine = ParakeetEngine::new(dir);
+    let emit_app = app.clone();
+    engine.set_listener(Box::new(move || {
+        let _ = emit_app.emit("engine-status", engine_status_view(&emit_app));
+    }));
+    let _ = app.state::<AppState>().stt.set(Arc::clone(&engine));
+    engine.warm();
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_secs(60));
+        engine.unload_if_idle(std::time::Duration::from_secs(15 * 60));
+    });
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1601,7 +1642,8 @@ pub fn run() {
             models_status,
             download_model,
             cancel_download,
-            delete_model
+            delete_model,
+            engine_status
         ])
         .setup(|app| {
             // Load persisted settings before anything uses them.
@@ -1679,10 +1721,9 @@ pub fn run() {
             }
             *app.state::<AppState>().transforms.lock().unwrap() = tlist;
 
-            // Load the whisper model into a resident server now so the first
-            // dictation doesn't pay the ~2s model-load cost.
-            let server_app = app.handle().clone();
-            std::thread::spawn(move || ensure_whisper_server(&server_app));
+            // Load the speech model now so the first dictation doesn't pay
+            // the model-load cost.
+            start_stt(app.handle());
 
             // The voice pill is a persistent fixture from launch, parked on
             // whichever display currently has the cursor, and follows it
@@ -1711,15 +1752,38 @@ pub fn run() {
                 api.prevent_close();
             }
         })
-        .build(tauri::generate_context!())
-        .expect("error while running tauri application")
-        .run(|app, event| {
-            // Kill the resident whisper-server — Drop doesn't run for state
-            // held by tauri on process exit, and an orphan would pin ~500 MB.
-            if let tauri::RunEvent::Exit = event {
-                app.state::<AppState>().whisper_server.lock().unwrap().take();
-            }
-        });
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod speech_engine_access_tests {
+    use super::{release_speech_model, warm_speech, AppState};
+
+    /// A webview can call download/delete before `setup` builds the engine.
+    #[test]
+    fn commands_before_setup_do_not_panic() {
+        let state = AppState::default();
+        warm_speech(&state);
+        assert_eq!(release_speech_model(&state), Ok(()), "nothing loaded yet");
+    }
+}
+
+#[cfg(test)]
+mod pipeline_end_state_tests {
+    use super::pipeline_end_state;
+
+    #[test]
+    fn success_ends_done_and_any_failure_ends_error() {
+        assert_eq!(pipeline_end_state(&Ok(())), "done");
+        for e in [
+            "Didn't catch that — hold the key a little longer.",
+            "The speech model isn't downloaded yet.",
+            "Heard nothing — try again closer to the mic.",
+        ] {
+            assert_eq!(pipeline_end_state(&Err(e.into())), "error");
+        }
+    }
 }
 
 #[cfg(test)]
@@ -2152,6 +2216,63 @@ mod platform_wiring_tests {
         assert!(try_begin_session(&busy).is_some());
     }
 
+    use crate::inject::InjectError;
+    use crate::voice_commands::{Key, Segment};
+
+    /// Runs `deliver_segments` with fakes; `fail_at` is the call number
+    /// (paste or key, counting from 0) that fails. Returns the result and a
+    /// log of every call made.
+    fn deliver(fail_at: Option<usize>) -> (Result<Delivery, String>, Vec<String>) {
+        let segments = vec![
+            Segment::Text("hello".into()),
+            Segment::Key(Key::Return),
+            Segment::Text("world".into()),
+        ];
+        let log = std::cell::RefCell::new(Vec::new());
+        let step = |what: String| {
+            let n = log.borrow().len();
+            log.borrow_mut().push(what);
+            if Some(n) == fail_at {
+                Err(InjectError::Synthesis("blocked".into()))
+            } else {
+                Ok(())
+            }
+        };
+        let r = deliver_segments(
+            &segments,
+            "hello world",
+            &mut |t| step(format!("paste:{t}")),
+            &mut |k| step(format!("key:{k:?}")),
+            &mut |t| {
+                log.borrow_mut().push(format!("copy:{t}"));
+                Ok(())
+            },
+        );
+        (r, log.into_inner())
+    }
+
+    #[test]
+    fn segments_are_sent_in_order() {
+        let (r, log) = deliver(None);
+        assert_eq!(r, Ok(Delivery::Sent));
+        assert_eq!(log, ["paste:hello", "key:Return", "paste:world"]);
+    }
+
+    #[test]
+    fn failed_key_puts_the_whole_dictation_on_the_clipboard() {
+        let (r, log) = deliver(Some(1));
+        assert!(matches!(r, Ok(Delivery::Copied(_))));
+        // Stops at the failure: "world" is not pasted on its own.
+        assert_eq!(log, ["paste:hello", "key:Return", "copy:hello world"]);
+    }
+
+    #[test]
+    fn failed_first_paste_falls_back_too() {
+        let (r, log) = deliver(Some(0));
+        assert!(matches!(r, Ok(Delivery::Copied(_))));
+        assert_eq!(log, ["paste:hello", "copy:hello world"]);
+    }
+
     /// A pipeline thread that panics mid-session must not leave Purl
     /// refusing every later dictation.
     #[test]
@@ -2171,7 +2292,12 @@ mod platform_wiring_tests {
     /// so Home can say "Paste needs Accessibility".
     #[test]
     fn trust_denied_surfaces_in_status() {
-        let s = status_payload_for(Trust::Denied, "CmdOrCtrl+Shift+Space", "idle");
+        let s = status_payload_for(
+            crate::engine::EngineState::Loading,
+            Trust::Denied,
+            "CmdOrCtrl+Shift+Space",
+            "idle",
+        );
         assert_eq!(s.paste_trust, Trust::Denied);
         assert_eq!(s.learning_supported, platform::LEARNING_SUPPORTED);
         let json = serde_json::to_value(&s).unwrap();

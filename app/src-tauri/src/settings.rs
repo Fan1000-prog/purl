@@ -1,7 +1,7 @@
 //! App settings, persisted as JSON in the app config dir.
 
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -124,21 +124,6 @@ impl Settings {
         }
         std::fs::write(path, serde_json::to_string_pretty(self).unwrap())
     }
-
-    /// Resolve the whisper model path under Application Support. Default is
-    /// base.en — ~3x faster decode than small.en with equivalent accuracy;
-    /// falls back to small.en when only that one is downloaded.
-    pub fn resolved_model_path(&self, app_support: &Path) -> PathBuf {
-        let base = app_support.join("models/ggml-base.en.bin");
-        if base.is_file() {
-            return base;
-        }
-        let small = app_support.join("models/ggml-small.en.bin");
-        if small.is_file() {
-            return small;
-        }
-        base
-    }
 }
 
 #[cfg(test)]
@@ -238,32 +223,6 @@ mod tests {
         let loaded = Settings::load(&path);
         assert_eq!(loaded.hotkey, Settings::default().hotkey);
         std::fs::remove_file(&path).unwrap();
-    }
-
-    #[test]
-    fn model_path_resolution() {
-        let s = Settings::default();
-        // Neither model file exists at this fake root → base.en (the default).
-        let resolved = s.resolved_model_path(Path::new("/tmp/appsupport"));
-        assert_eq!(
-            resolved,
-            PathBuf::from("/tmp/appsupport/models/ggml-base.en.bin")
-        );
-
-        // Only small.en on disk (pre-upgrade install) → keep using it.
-        let root = std::env::temp_dir().join("purl-model-res-test");
-        std::fs::create_dir_all(root.join("models")).unwrap();
-        std::fs::write(root.join("models/ggml-small.en.bin"), b"x").unwrap();
-        assert_eq!(
-            s.resolved_model_path(&root),
-            root.join("models/ggml-small.en.bin")
-        );
-        std::fs::write(root.join("models/ggml-base.en.bin"), b"x").unwrap();
-        assert_eq!(
-            s.resolved_model_path(&root),
-            root.join("models/ggml-base.en.bin")
-        );
-        std::fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

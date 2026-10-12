@@ -146,8 +146,12 @@ pub fn is_file_verified(dir: &Path, file: &ModelFile) -> bool {
 
 /// Every file present at its exact size and verified.
 pub fn is_installed(app_data: &Path, spec: &ModelSpec) -> bool {
-    let dir = model_dir(app_data, spec.id);
-    spec.files.iter().all(|f| is_file_verified(&dir, f))
+    is_installed_in(&model_dir(app_data, spec.id), spec)
+}
+
+/// `is_installed` for a caller that already holds the model's folder.
+pub fn is_installed_in(dir: &Path, spec: &ModelSpec) -> bool {
+    spec.files.iter().all(|f| is_file_verified(dir, f))
 }
 
 #[cfg(test)]
