@@ -19,7 +19,9 @@ concurrency:
   cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 env:
-  PUBLISH: ${{ startsWith(github.ref, 'refs/tags/v') }}
+  # Only a pushed version tag publishes. A manual run started on a tag ref
+  # still gets the throwaway identity and no secrets.
+  PUBLISH: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
 
 jobs:
   build:
@@ -57,15 +59,7 @@ jobs:
       - name: Fetch llama-server
         env:
           PURL_TARGET: ${{ matrix.target }}
-        run: |
-          if [[ -f scripts/fetch-llama.mjs ]]; then
-            node scripts/fetch-llama.mjs
-          elif [[ "$PUBLISH" == "true" ]]; then
-            echo "::error::scripts/fetch-llama.mjs is missing, so this release would ship without Smart cleanup."
-            exit 1
-          else
-            echo "::warning::scripts/fetch-llama.mjs is missing; building without llama-server. A release run fails here."
-          fi
+        run: node scripts/fetch-llama.mjs
 
       - run: npm ci
         working-directory: app
@@ -77,8 +71,8 @@ jobs:
       - name: Signing identity (macOS)
         if: runner.os == 'macOS'
         env:
-          MACOS_CERT_P12_BASE64: ${{ startsWith(github.ref, 'refs/tags/v') && secrets.MACOS_CERT_P12_BASE64 || '' }}
-          MACOS_CERT_PASSWORD: ${{ startsWith(github.ref, 'refs/tags/v') && secrets.MACOS_CERT_PASSWORD || '' }}
+          MACOS_CERT_P12_BASE64: ${{ env.PUBLISH == 'true' && secrets.MACOS_CERT_P12_BASE64 || '' }}
+          MACOS_CERT_PASSWORD: ${{ env.PUBLISH == 'true' && secrets.MACOS_CERT_PASSWORD || '' }}
         run: |
           if [[ "$PUBLISH" != "true" ]]; then
             work="$(mktemp -d)"
@@ -97,8 +91,8 @@ jobs:
       - name: Build
         working-directory: app
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ startsWith(github.ref, 'refs/tags/v') && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ startsWith(github.ref, 'refs/tags/v') && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ env.PUBLISH == 'true' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ env.PUBLISH == 'true' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
         run: |
           args=(--target "${{ matrix.target }}")
           if [[ "$PUBLISH" != "true" ]]; then
@@ -144,10 +138,8 @@ jobs:
           $dir = Join-Path $env:LOCALAPPDATA 'Purl'
           $exe = Join-Path $dir 'purl.exe'
           if (-not (Test-Path $exe)) { throw "purl.exe not installed in $dir; found: $(Get-ChildItem $dir -Name)" }
-          # Once ONNX Runtime is linked, its DLL must sit beside purl.exe.
-          if (Select-String -Path app/src-tauri/Cargo.lock -Pattern '^name = "ort"$' -Quiet) {
-            if (-not (Test-Path (Join-Path $dir 'onnxruntime.dll'))) { throw "onnxruntime.dll is not beside purl.exe" }
-          }
+          # Speech links ONNX Runtime dynamically; its DLL must sit beside purl.exe.
+          if (-not (Test-Path (Join-Path $dir 'onnxruntime.dll'))) { throw "onnxruntime.dll is not beside purl.exe" }
 
           $log = Join-Path $env:TEMP 'purl-smoke.log'
           Remove-Item $log -ErrorAction SilentlyContinue
@@ -178,7 +170,7 @@ jobs:
   # it creates the draft release and uploads what the builds produced.
   publish:
     needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -197,7 +189,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+          draft="$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft 2>/dev/null || true)"
+          if [[ "$draft" == "false" ]]; then
+            echo "::error::$GITHUB_REF_NAME is already published; refusing to overwrite its assets. Cut a new tag."
+            exit 1
+          fi
+          if [[ -z "$draft" ]]; then
             pre=()
             if [[ "$GITHUB_REF_NAME" == *-* ]]; then pre=(--prerelease); fi
             gh release create "$GITHUB_REF_NAME" --draft "${pre[@]}" --verify-tag \
