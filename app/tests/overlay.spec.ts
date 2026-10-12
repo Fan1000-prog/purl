@@ -197,3 +197,41 @@ test("the hit rect is re-sent when the pill changes size on its own", async ({ p
   expect(after[2]).toBeGreaterThan(before[2]);
   expect(after).toEqual([box.x, box.y, box.width, box.height]);
 });
+
+test("a render that changes nothing doesn't re-announce the pill", async ({ page }) => {
+  await open(page);
+  await settle(page);
+  // Count every write to the pill's screen-reader live region from here on.
+  await page.locator("#capsule .purl-sr-only").evaluate((el) => {
+    (window as any).__announced = 0;
+    new MutationObserver((m) => ((window as any).__announced += m.length)).observe(el, {
+      childList: true,
+      characterData: true,
+      subtree: true,
+    });
+  });
+  const announced = () => page.evaluate(() => (window as any).__announced as number);
+  // Engine updates (speech model ready, then unloaded) and a repeat idle.
+  await emit(page, "engine-status", { stt: { state: "ready" }, llm: { state: "idle" } });
+  await emit(page, "engine-status", { stt: { state: "idle" }, llm: { state: "idle" } });
+  await emit(page, "state", "idle");
+  await page.waitForTimeout(50);
+  expect(await announced()).toBe(0);
+  await emit(page, "state", "recording");
+  await expect.poll(announced).toBeGreaterThan(0);
+});
+
+test("the hit rect is sent only when it changes", async ({ page }) => {
+  await open(page);
+  await settle(page);
+  const sent = () =>
+    page.evaluate(() => (window as any).__invoked.filter((c: any) => c.cmd === "set_overlay_hit_rect").length);
+  const before = await sent();
+  await emit(page, "engine-status", { stt: { state: "ready" }, llm: { state: "idle" } });
+  await emit(page, "state", "idle");
+  await page.waitForTimeout(100);
+  expect(await sent()).toBe(before);
+  await emit(page, "state", "processing");
+  await expect.poll(() => lastHitRect(page)).toBeNull();
+  expect(await sent()).toBe(before + 1);
+});
