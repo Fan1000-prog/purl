@@ -357,8 +357,17 @@ mod tests {
     /// would show up here as a different version.
     #[test]
     fn links_the_pinned_onnx_runtime() {
-        let info = ort::info();
-        assert!(info.contains("rel-1.28."), "{info}");
+        // The version string, not `ort::info()`: Microsoft's release DLL
+        // reports git-branch=HEAD in its build info, so only the API's own
+        // version names the release on both platforms.
+        // SAFETY: OrtGetApiBase returns a static, non-null table, and
+        // GetVersionString returns a static, NUL-terminated string.
+        let version = unsafe {
+            let base = ort::sys::OrtGetApiBase();
+            std::ffi::CStr::from_ptr(((*base).GetVersionString)())
+        }
+        .to_string_lossy();
+        assert!(version.starts_with("1.28."), "{version}");
     }
 
     #[test]
