@@ -135,8 +135,8 @@ better; 0.04 means a 10-second clip takes about 0.4 seconds):
 | Fast | 0.0031 ms | 0.0037 ms | 10 calls |
 | Smart (Qwen3.5 2B) | 910 ms | 983 ms | 30 calls after one warm-up, 0 fell back to Fast; first server start 19.1 s |
 
-Raw results: `bench/results/2026-10-12-apple-m1-pro.json`. To run it
-yourself, see `bench/README.md`.
+Raw results: [`bench/results/2026-10-12-apple-m1-pro.json`](bench/results/2026-10-12-apple-m1-pro.json).
+To run it yourself, see [`bench/README.md`](bench/README.md).
 
 ## Case study
 

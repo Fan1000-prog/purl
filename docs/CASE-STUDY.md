@@ -111,7 +111,7 @@ builds for Intel Macs, so Intel support waits until people ask for it.
 ## Measured: old engine vs new
 
 From the benchmark run on 2026-10-12, on an Apple M1 Pro
-(`bench/results/2026-10-12-apple-m1-pro.json`). The machine was busy during
+([`bench/results/2026-10-12-apple-m1-pro.json`](../bench/results/2026-10-12-apple-m1-pro.json)). The machine was busy during
 the run, so speeds are on the slow side.
 
 | | whisper.cpp base.en (VendastaTalk) | Parakeet v3 (Purl) |
