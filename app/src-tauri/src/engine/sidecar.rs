@@ -449,9 +449,15 @@ mod tests {
 
     #[test]
     fn free_port_is_bindable_on_loopback() {
-        let port = free_port().unwrap();
-        assert!(port > 0);
-        TcpListener::bind(("127.0.0.1", port)).unwrap();
+        // Another test running in parallel can take the port between
+        // free_port() and bind(); the engine retries on a new port for the
+        // same reason, so the test does too.
+        let bound = (0..5).any(|_| {
+            let port = free_port().unwrap();
+            assert!(port > 0);
+            TcpListener::bind(("127.0.0.1", port)).is_ok()
+        });
+        assert!(bound, "no port from free_port() was bindable in 5 tries");
     }
 
     #[test]
