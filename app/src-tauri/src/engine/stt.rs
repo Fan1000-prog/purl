@@ -246,6 +246,12 @@ impl ParakeetEngine {
             self.notify();
         }
     }
+
+    /// Let go of a decoder that crashed, and say why in the error.
+    fn crashed(&self, decoder: &SharedDecoder, why: &str) -> SttError {
+        self.discard(decoder);
+        SttError::Engine(format!("the speech engine crashed ({why}); try again"))
+    }
 }
 
 /// The text of a caught panic, when it has one.
@@ -276,12 +282,8 @@ impl SttEngine for ParakeetEngine {
         let parts = match decoded {
             Ok(Some(Ok(parts))) => parts,
             Ok(Some(Err(e))) => return Err(SttError::Engine(e)),
-            Ok(None) | Err(_) => {
-                self.discard(&decoder);
-                return Err(SttError::Engine(
-                    "the speech engine crashed; try again".into(),
-                ));
-            }
+            Ok(None) => return Err(self.crashed(&decoder, "an earlier decode crashed")),
+            Err(panic) => return Err(self.crashed(&decoder, &panic_message(&panic))),
         };
         self.slot.lock().unwrap().last_used = Instant::now();
         let parts: Vec<&str> = parts
@@ -490,7 +492,7 @@ mod tests {
         );
         assert!(matches!(
             e.transcribe(&[0.0; 16000]),
-            Err(SttError::Engine(_))
+            Err(SttError::Engine(r)) if r.contains("decoder blew up")
         ));
         assert_eq!(e.status(), EngineState::Idle, "the broken model was let go");
         assert_eq!(e.transcribe(&[0.0; 16000]).unwrap(), "ok");
