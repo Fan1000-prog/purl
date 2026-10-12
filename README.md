@@ -169,6 +169,7 @@ cd app && npm ci && npm run tauri build
 ```
 
 Tests, lint and project conventions are in [AGENTS.md](AGENTS.md).
+How releases are cut and signed: [docs/RELEASING.md](docs/RELEASING.md).
 
 ## Licence
 
