@@ -30,11 +30,19 @@ to_wav16k() {
 tarball="$CACHE/test-clean.tar.gz"
 if [ ! -f "$tarball.ok" ]; then
   curl -fL --retry 3 -C - -o "$tarball" "$LIBRI_URL"
-  [ "$(md5_of "$tarball")" = "$LIBRI_MD5" ] || { echo "test-clean md5 mismatch" >&2; exit 1; }
+  # A bad tarball is deleted so the next run downloads it fresh, not resumes it.
+  [ "$(md5_of "$tarball")" = "$LIBRI_MD5" ] || { echo "test-clean md5 mismatch" >&2; rm -f "$tarball"; exit 1; }
   touch "$tarball.ok"
 fi
+# Extract into a scratch dir and rename when done, so an interrupted extract
+# never leaves a half-filled LibriSpeech/test-clean that looks finished.
 if [ ! -d "$CACHE/LibriSpeech/test-clean" ]; then
-  tar -xzf "$tarball" -C "$CACHE"
+  scratch="$CACHE/.extract"
+  rm -rf "$scratch"
+  mkdir -p "$scratch" "$CACHE/LibriSpeech"
+  tar -xzf "$tarball" -C "$scratch"
+  mv "$scratch/LibriSpeech/test-clean" "$CACHE/LibriSpeech/test-clean"
+  rm -rf "$scratch"
 fi
 
 # First COUNT utterances by sorted id, from the per-chapter transcript files.
