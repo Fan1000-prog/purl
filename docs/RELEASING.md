@@ -35,8 +35,9 @@ They have to install it by hand, or wait for `0.9.1`.
 The workflow can also be started by hand (**Actions → release → Run
 workflow**, once it is on `main`). A manual run builds and smoke-tests with a
 throwaway macOS certificate and no updater key, keeps the installers as
-workflow artifacts, and never publishes. Pull requests never trigger it, so
-the signing secrets never reach PR code.
+workflow artifacts, and never publishes, even when started on a tag: only a
+pushed tag gets the secrets. Pull requests never trigger it, so the signing
+secrets never reach PR code.
 
 ## One-time setup: signing secrets
 
@@ -59,8 +60,8 @@ macOS remembers the Accessibility permission (which paste needs) per signing
 identity. An ad-hoc signature is different on every build, so each update
 would silently drop the permission and paste would stop working. Signing
 every release with the same certificate keeps the permission across updates.
-It is not Apple notarization: users still see the "unidentified developer"
-prompt on first open.
+It is not Apple notarization: macOS still blocks the first open (see
+[First open](#first-open-macos-and-windows)).
 
 **Keep the certificate.** If it is lost and replaced, every user has to grant
 Accessibility again after the next update. Save the `.p12` and its password
@@ -140,6 +141,11 @@ Then move `purl-signing.p12` off the Desktop and into your password manager.
 
 ## Cutting a release
 
+0. **Before the first release candidate**, start a manual run from `main`
+   (**Actions → release → Run workflow**) and wait for both jobs to pass.
+   It builds and installs the real Windows installer with
+   `onnxruntime.dll` and `llama-server`, and signs the macOS app the way a
+   release does, without publishing anything.
 1. Set the new version in all three places, on a branch, and merge it:
    `app/src-tauri/tauri.conf.json`, `app/src-tauri/Cargo.toml`,
    `app/package.json`. The tag must match `tauri.conf.json` (a `-rc.N`
@@ -155,13 +161,39 @@ Then move `purl-signing.p12` off the Desktop and into your password manager.
 3. Watch the run: `gh run watch --repo Fan1000-prog/purl`. Both build jobs
    must pass their smoke test. Then `publish` creates the draft release and
    uploads the installers, updater files and `latest.json`.
-4. Open the draft under **Releases**, check the assets listed above are all
-   there, edit the notes (say plainly that Windows has only been smoke-tested
-   on CI until someone tries it on real hardware), and publish.
+4. **Install the rc on real hardware before publishing.** Download from the
+   draft (**Releases → the draft → Assets**), not from `latest`.
+   - Mac: open `Purl_aarch64.dmg`, drag Purl to Applications, and open it
+     (see [First open](#first-open-macos-and-windows)). Grant the
+     microphone and Accessibility, then dictate into Gmail in Chrome and
+     check the text pastes. Turn on Smart cleanup once and check it works.
+   - Windows, if you have a PC: run `Purl_x64-setup.exe`, get past
+     SmartScreen, and dictate the same way.
+5. Open the draft under **Releases**, check the assets listed above are all
+   there, and edit the notes. Say plainly that Windows has only been
+   smoke-tested on CI until someone tries it on real hardware, that there is
+   no Intel Mac build, and paste the first-open steps below. Then publish.
 
-If a run fails after the draft exists, fix the cause and re-run the failed
-jobs; uploads overwrite (`--clobber`). To redo a tag from scratch, delete the
-draft release and the tag first.
+If a run fails while the release is still a draft, fix the cause and re-run
+the failed jobs; uploads overwrite (`--clobber`). Once a release is
+published, `publish` refuses to touch it: cut a new tag instead. To redo a
+tag from scratch, delete the draft release and the tag first.
+
+## First open (macOS and Windows)
+
+Purl isn't notarized by Apple or signed for Windows, so both systems block
+the first open. Put these steps in every release's notes.
+
+- **macOS 14:** in Applications, right-click Purl → **Open**, then **Open**
+  again.
+- **macOS 15 and later:** right-click → Open no longer works. Open Purl once
+  and close the warning. Then go to **System Settings → Privacy & Security**,
+  scroll down to the message about Purl, click **Open Anyway** and confirm
+  with your password.
+- **Windows:** on the blue "Windows protected your PC" screen, click **More
+  info → Run anyway**.
+
+After the first open, both systems remember the choice.
 
 ## What the smoke test proves
 
@@ -169,8 +201,7 @@ draft release and the tag first.
 headless, loads settings, the dictionary and the platform layer without
 models, writes `SMOKE OK <version> ...` to `<temp>/purl-smoke.log` and exits.
 On Windows the job installs silently (`/S`), runs it, checks
-`onnxruntime.dll` sits beside `purl.exe` once ONNX Runtime is linked, and
-uninstalls. On macOS it runs from the mounted DMG and checks the signature
+`onnxruntime.dll` sits beside `purl.exe`, and uninstalls. On macOS it runs from the mounted DMG and checks the signature
 is "Purl Self-Signed".
 
 It does not prove dictation works: no microphone, no model, no paste into a
