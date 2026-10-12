@@ -19,8 +19,8 @@ Rust core in `app/src-tauri`, TypeScript + Vite UI in `app/src`).
 
 - Bundle id `app.purl.desktop`; crate `purl`, lib `purl_lib`.
 - No network at dictation time. Network is only for model downloads and the
-  update check. Local engines (whisper-server today, llama-server later) are
-  spoken to over `127.0.0.1` only.
+  update check. Local engines run in-process (speech) or as a 127.0.0.1-only
+  sidecar (llama-server, Task 6).
 - Text from other apps (transform selections, fields read back for
   correction learning) is untrusted. It goes into an LLM prompt only inside
   delimited tags it cannot close, and the prompt says it is data.

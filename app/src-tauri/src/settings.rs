@@ -1,7 +1,7 @@
 //! App settings, persisted as JSON in the app config dir.
 
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -84,7 +84,7 @@ impl Default for Settings {
             smart_model: DEFAULT_SMART_MODEL.into(),
             structure_mode: StructureMode::None,
             command_detection: true,
-            learn_corrections: true,
+            learn_corrections: crate::platform::LEARNING_SUPPORTED,
             onboarding_complete: false,
             field_reading_disclosed: false,
             last_seen_version: String::new(),
@@ -110,6 +110,11 @@ impl Settings {
         if !SMART_MODELS.contains(&self.smart_model.as_str()) {
             self.smart_model = DEFAULT_SMART_MODEL.into();
         }
+        // Nothing can read other apps' fields here (Windows in v1), so a
+        // settings file carried over from a Mac must not claim it is on.
+        if !crate::platform::LEARNING_SUPPORTED {
+            self.learn_corrections = false;
+        }
         self
     }
 
@@ -118,21 +123,6 @@ impl Settings {
             std::fs::create_dir_all(dir)?;
         }
         std::fs::write(path, serde_json::to_string_pretty(self).unwrap())
-    }
-
-    /// Resolve the whisper model path under Application Support. Default is
-    /// base.en — ~3x faster decode than small.en with equivalent accuracy;
-    /// falls back to small.en when only that one is downloaded.
-    pub fn resolved_model_path(&self, app_support: &Path) -> PathBuf {
-        let base = app_support.join("models/ggml-base.en.bin");
-        if base.is_file() {
-            return base;
-        }
-        let small = app_support.join("models/ggml-small.en.bin");
-        if small.is_file() {
-            return small;
-        }
-        base
     }
 }
 
@@ -236,32 +226,6 @@ mod tests {
     }
 
     #[test]
-    fn model_path_resolution() {
-        let s = Settings::default();
-        // Neither model file exists at this fake root → base.en (the default).
-        let resolved = s.resolved_model_path(Path::new("/tmp/appsupport"));
-        assert_eq!(
-            resolved,
-            PathBuf::from("/tmp/appsupport/models/ggml-base.en.bin")
-        );
-
-        // Only small.en on disk (pre-upgrade install) → keep using it.
-        let root = std::env::temp_dir().join("purl-model-res-test");
-        std::fs::create_dir_all(root.join("models")).unwrap();
-        std::fs::write(root.join("models/ggml-small.en.bin"), b"x").unwrap();
-        assert_eq!(
-            s.resolved_model_path(&root),
-            root.join("models/ggml-small.en.bin")
-        );
-        std::fs::write(root.join("models/ggml-base.en.bin"), b"x").unwrap();
-        assert_eq!(
-            s.resolved_model_path(&root),
-            root.join("models/ggml-base.en.bin")
-        );
-        std::fs::remove_dir_all(&root).unwrap();
-    }
-
-    #[test]
     fn onboarding_flag_defaults_false_and_round_trips() {
         assert!(!Settings::default().onboarding_complete);
 
@@ -354,5 +318,18 @@ mod tests {
             assert!(!on_disk.contains(gone), "{gone} survived a save: {on_disk}");
         }
         assert!(on_disk.contains(r#""cleanup_mode": "fast""#));
+    }
+
+    #[test]
+    fn learning_is_off_wherever_it_is_unsupported() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("settings.json");
+        std::fs::write(&p, r#"{"learn_corrections":true}"#).unwrap();
+        let s = Settings::load(&p);
+        assert_eq!(s.learn_corrections, crate::platform::LEARNING_SUPPORTED);
+        assert_eq!(
+            Settings::default().learn_corrections,
+            crate::platform::LEARNING_SUPPORTED
+        );
     }
 }

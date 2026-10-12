@@ -162,6 +162,7 @@ function install() {
   if (sttParam === "failed") engine.stt = { state: "failed", reason: "The speech model couldn't load. Re-download it in Settings." };
 
   const status = () => ({
+    stt: engine.stt,
     paste_trust: trust.ax,
     learning_supported: window.__PURL_PLATFORM__ === "macos",
     hotkey: settings.hotkey,

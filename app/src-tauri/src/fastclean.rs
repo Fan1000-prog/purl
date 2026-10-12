@@ -2,8 +2,8 @@
 //! LLM pass, which costs seconds per dictation on CPU-only machines.
 //!
 //! Deliberately conservative: strips only unambiguous filler words and fixes
-//! dictionary term casing. Whisper already provides punctuation and casing;
-//! false-start removal and rephrasing stay LLM-only (Settings → AI cleanup).
+//! dictionary term casing. The speech engine already provides punctuation and
+//! casing; false-start removal and rephrasing are left to Smart cleanup.
 
 use crate::dictionary::Dictionary;
 
@@ -148,6 +148,17 @@ mod tests {
         assert_eq!(
             clean("I sent it already, um. Next topic.", &dictionary()),
             "I sent it already. Next topic."
+        );
+    }
+
+    #[test]
+    fn seed_entry_fixes_casing_but_leaves_pearl_alone() {
+        let seed = Dictionary::parse(crate::dictionary::SEED);
+        assert_eq!(clean("I use purl daily", &seed), "I use Purl daily");
+        // Parakeet hears "Purl" as "Pearl", but pearl is a real word.
+        assert_eq!(
+            clean("Hello, Pearl. A pearl necklace.", &seed),
+            "Hello, Pearl. A pearl necklace."
         );
     }
 
