@@ -8,11 +8,15 @@
 
 mod wer;
 
+use purl_lib::cleanup::smart_clean;
 use purl_lib::dictionary::{Dictionary, SEED};
+use purl_lib::engine::llm::{self, LlamaServerEngine, LlmEngine};
 use purl_lib::engine::models::model_dir;
+use purl_lib::engine::sidecar::llama_server_path;
 use purl_lib::engine::stt::{ParakeetEngine, SttEngine, MODEL_ID};
 use purl_lib::engine::EngineState;
 use purl_lib::fastclean;
+use purl_lib::StructureMode;
 use serde_json::{json, Value};
 use std::fs::File;
 use std::path::{Path, PathBuf};
@@ -24,6 +28,12 @@ const LOAD_TIMEOUT: Duration = Duration::from_secs(120);
 const WHISPER_TIMEOUT: Duration = Duration::from_secs(120);
 /// Fast cleanup takes microseconds; repeat each call to get above timer noise.
 const CLEANUP_REPS: u32 = 1_000;
+/// The Smart model the app recommends, and the app's budget for it: a call
+/// that runs longer falls back to Fast.
+const SMART_MODEL: &str = "qwen3.5-2b";
+const SMART_BUDGET: Duration = Duration::from_secs(6);
+/// Smart calls per transcript, after one untimed warm-up call.
+const SMART_REPS: usize = 3;
 
 struct Clip {
     file: String,
@@ -45,6 +55,7 @@ struct ClipResult {
 
 struct Args {
     cache: PathBuf,
+    app_data: PathBuf,
     model_dir: PathBuf,
     whisper_cli: PathBuf,
     out: Option<PathBuf>,
@@ -72,6 +83,7 @@ fn main() {
     let (parakeet, dictation_transcripts) = bench_parakeet(&args.model_dir, &scratch, &data);
     let whisper_gpu = bench_whisper(&args.whisper_cli, &ggml, &scratch, &data, true);
     let whisper_cpu = bench_whisper(&args.whisper_cli, &ggml, &scratch, &data, false);
+    let smart = bench_smart_cleanup(&args.app_data, &dictation_transcripts);
 
     let mut machine = machine;
     machine["load_avg_1m_at_end"] = json!(load_avg());
@@ -100,12 +112,7 @@ fn main() {
         "stt": [parakeet, whisper_gpu, whisper_cpu],
         "cleanup": [
             bench_fast_cleanup(&dictation_transcripts),
-            {
-                "mode": "smart",
-                "model": "Qwen3.5-2B Q4_K_M via llama-server",
-                "status": "not measured yet",
-                "reason": "Smart cleanup (Task 6) is not merged; rerun the bench once it is",
-            },
+            smart,
         ],
         "windows": "not measured yet",
     });
@@ -126,14 +133,13 @@ fn main() {
 
 fn parse_args() -> Args {
     let home = PathBuf::from(std::env::var("HOME").unwrap_or_default());
+    let app_data = home.join("Library/Application Support/app.purl.desktop");
     let mut args = Args {
         cache: std::env::var("PURL_BENCH_CACHE")
             .map(PathBuf::from)
             .unwrap_or_else(|_| home.join("Library/Caches/purl-bench")),
-        model_dir: model_dir(
-            &home.join("Library/Application Support/app.purl.desktop"),
-            MODEL_ID,
-        ),
+        model_dir: model_dir(&app_data, MODEL_ID),
+        app_data,
         whisper_cli: PathBuf::from("whisper-cli"),
         out: None,
     };
@@ -385,6 +391,83 @@ fn bench_fast_cleanup(transcripts: &[String]) -> Value {
         "latency_ms_mean": round(mean(&per_call_ms), 4),
         "latency_ms_p95": round(p95(&per_call_ms), 4),
         "calls": per_call_ms.len(),
+    })
+}
+
+/// Smart cleanup latency per transcript through the app's own `smart_clean`,
+/// with the server already started (the app starts it while the user talks)
+/// and the seed dictionary. A call that falls back to Fast still counts, at
+/// the time it took, and its note is kept.
+fn bench_smart_cleanup(app_data: &Path, transcripts: &[String]) -> Value {
+    let not_measured = |reason: String| json!({ "mode": "smart", "model": SMART_MODEL, "status": "not measured", "reason": reason });
+    let bin = llama_server_path(&Path::new(env!("CARGO_MANIFEST_DIR")).join("vendor"));
+    if !bin.is_file() {
+        return not_measured(format!(
+            "{} is missing: run `npm run fetch-llama` in app/",
+            bin.display()
+        ));
+    }
+    let Some(model) = llm::model_path(app_data, SMART_MODEL).filter(|m| m.is_file()) else {
+        return not_measured(format!(
+            "{SMART_MODEL} is not downloaded: cargo run --example fetch_models {SMART_MODEL}"
+        ));
+    };
+    let model_file = model.file_name().map(|n| n.to_string_lossy().into_owned());
+
+    let engine = LlamaServerEngine::new(bin, model, None);
+    let start = Instant::now();
+    engine.warm();
+    while engine.status() == EngineState::Loading {
+        assert!(
+            start.elapsed() < LOAD_TIMEOUT,
+            "llama-server didn't start within {LOAD_TIMEOUT:?}"
+        );
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let server_start_ms = start.elapsed().as_secs_f64() * 1000.0;
+    if let EngineState::Failed { reason } = engine.status() {
+        return not_measured(format!("llama-server failed to start: {reason}"));
+    }
+
+    let dictionary = Dictionary::parse(SEED);
+    let terms = dictionary.llm_terms();
+    let clean = |raw: &str| {
+        smart_clean(
+            &*engine,
+            raw,
+            &terms,
+            StructureMode::None,
+            SMART_BUDGET,
+            || fastclean::clean(raw, &dictionary),
+        )
+    };
+    clean(&transcripts[0]);
+    let (mut per_call_ms, mut fallbacks) = (Vec::new(), Vec::new());
+    for _ in 0..SMART_REPS {
+        for raw in transcripts {
+            let t = Instant::now();
+            let result = clean(raw);
+            per_call_ms.push(t.elapsed().as_secs_f64() * 1000.0);
+            if !result.used_llm {
+                fallbacks.push(result.note.unwrap_or_default());
+            }
+        }
+    }
+    engine.shutdown();
+
+    json!({
+        "mode": "smart",
+        "model": SMART_MODEL,
+        "model_file": model_file,
+        "server": "llama.cpp llama-server, the build pinned in scripts/fetch-llama.mjs",
+        "inputs": format!("Parakeet transcripts of dictation_10, {SMART_REPS} passes after one warm-up call"),
+        "budget_ms": SMART_BUDGET.as_millis(),
+        "server_start_ms": round(server_start_ms, 0),
+        "latency_ms_mean": round(mean(&per_call_ms), 1),
+        "latency_ms_p95": round(p95(&per_call_ms), 1),
+        "calls": per_call_ms.len(),
+        "fell_back_to_fast": fallbacks.len(),
+        "fallback_notes": fallbacks,
     })
 }
 
