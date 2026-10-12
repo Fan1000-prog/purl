@@ -96,6 +96,12 @@ pub(crate) trait Server: Send + Sync {
         body: &serde_json::Value,
         timeout: Duration,
     ) -> Result<serde_json::Value, ChatError>;
+
+    /// The server's process id, for tests that watch it die.
+    #[cfg(test)]
+    fn pid(&self) -> Option<u32> {
+        None
+    }
 }
 
 /// The real thing: a `llama-server` sidecar and an HTTP client for it.
@@ -130,6 +136,11 @@ impl Server for LlamaServer {
                 ChatError::Other(e.to_string())
             }
         })
+    }
+
+    #[cfg(test)]
+    fn pid(&self) -> Option<u32> {
+        Some(self.sidecar.lock().unwrap().pid())
     }
 }
 
@@ -259,20 +270,14 @@ impl LlamaServerEngine {
     }
 
     /// Stop the server so its model file can be deleted. False while it is
-    /// starting or answering a request.
+    /// starting or answering a request. The check and the stop share one
+    /// lock, so a dictation can't take the server in between.
     pub fn release(&self) -> bool {
-        let busy = {
-            let slot = self.slot.lock().unwrap();
-            match &slot.phase {
-                Phase::Starting => true,
-                Phase::Running(s) => Arc::strong_count(s) > 1,
-                _ => false,
-            }
-        };
-        if !busy {
-            self.stop_when(|_| true);
-        }
-        !busy
+        self.stop_when(|slot| match &slot.phase {
+            Phase::Starting => false,
+            Phase::Running(s) => Arc::strong_count(s) == 1,
+            _ => true,
+        })
     }
 
     /// Stop the server now, whatever it is doing. For app exit.
@@ -280,12 +285,16 @@ impl LlamaServerEngine {
         self.stop_when(|_| true);
     }
 
-    /// Stop (and forget any failure) when `should` says so.
-    fn stop_when(&self, should: impl FnOnce(&Slot) -> bool) {
+    /// Stop (and forget any failure) when `should` says so. True when the
+    /// server is stopped afterwards, including when it already was.
+    fn stop_when(&self, should: impl FnOnce(&Slot) -> bool) -> bool {
         let old = {
             let mut slot = self.slot.lock().unwrap();
-            if matches!(slot.phase, Phase::Stopped) || !should(&slot) {
-                return;
+            if matches!(slot.phase, Phase::Stopped) {
+                return true;
+            }
+            if !should(&slot) {
+                return false;
             }
             slot.generation += 1;
             std::mem::replace(&mut slot.phase, Phase::Stopped)
@@ -294,6 +303,7 @@ impl LlamaServerEngine {
         drop(old);
         self.started.notify_all();
         self.notify();
+        true
     }
 
     /// Stopped/Failed + installed → Starting. Returns what to start when
@@ -643,6 +653,39 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn release_waits_for_a_request_in_flight() {
+        let h = harness(0, false, "Hello.", false);
+        h.engine.complete("s", "u", BUDGET).unwrap();
+        // A dictation holds the server, as `complete` does mid-request.
+        let in_flight = h.engine.acquire(Instant::now() + BUDGET).unwrap();
+        assert!(!h.engine.release(), "released mid-request");
+        assert!(!h.dropped.load(Ordering::SeqCst));
+        assert_eq!(h.engine.status(), EngineState::Ready);
+        drop(in_flight);
+        assert!(h.engine.release());
+        assert!(h.dropped.load(Ordering::SeqCst));
+        assert!(h.engine.release(), "already stopped counts as released");
+    }
+
+    #[test]
+    fn release_refuses_while_starting() {
+        let h = harness(300, false, "Hello.", false);
+        h.engine.warm();
+        assert_eq!(h.engine.status(), EngineState::Loading);
+        assert!(!h.engine.release());
+        assert_eq!(h.engine.status(), EngineState::Loading);
+    }
+
+    #[test]
+    fn release_clears_a_failed_start() {
+        let h = harness(0, true, "", false);
+        let _ = h.engine.complete("s", "u", BUDGET);
+        assert!(matches!(h.engine.status(), EngineState::Failed { .. }));
+        assert!(h.engine.release());
+        assert_eq!(h.engine.status(), EngineState::Idle);
+    }
+
+    #[test]
     fn listener_hears_start_and_stop() {
         let h = harness(0, false, "Hello.", false);
         let calls = Arc::new(AtomicUsize::new(0));
@@ -763,8 +806,10 @@ pub(crate) mod tests {
         }
         assert_eq!(engine.status(), EngineState::Ready);
         eprintln!("llama-server ready in {:?}", t0.elapsed());
+        // This engine's own server: other real-model tests may run theirs
+        // alongside it.
         let pid = match &engine.slot.lock().unwrap().phase {
-            Phase::Running(_) => server_pid(),
+            Phase::Running(s) => s.pid().expect("a real server has a PID"),
             _ => unreachable!(),
         };
         engine.shutdown();
@@ -776,19 +821,6 @@ pub(crate) mod tests {
             );
             std::thread::sleep(Duration::from_millis(20));
         }
-    }
-
-    /// The one llama-server this test process started.
-    fn server_pid() -> u32 {
-        let out = std::process::Command::new("pgrep")
-            .args(["-P", &std::process::id().to_string(), "llama-server"])
-            .output()
-            .unwrap();
-        String::from_utf8(out.stdout)
-            .unwrap()
-            .trim()
-            .parse()
-            .unwrap()
     }
 
     fn process_alive(pid: u32) -> bool {
