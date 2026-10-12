@@ -2,7 +2,7 @@
 import "./dev/mock-tauri";
 import { displayHotkey as prettyHotkey } from "./platform";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { emit, listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
 import { initHome } from "./views/home";
 import { initDictionary } from "./views/dictionary";
@@ -36,9 +36,11 @@ export function getSettings(): Settings | null {
   return currentSettings;
 }
 
-/** The recorder owns hotkey persistence; it syncs the cached copy here. */
+/** The recorder owns hotkey persistence; it syncs the cached copy here, and
+ *  the overlay pill (another window) hears it so its keycaps stay true. */
 export function setCurrentHotkey(hk: string): void {
   if (currentSettings) currentSettings.hotkey = hk;
+  void emit("hotkey-changed", hk);
 }
 
 /** Change some settings. Read-modify-write against the backend, so a stale

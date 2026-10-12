@@ -1,0 +1,213 @@
+/* Purl design tokens: one source for the landing page and the desktop app.
+
+   Direction: the 02-motion pack. Dark (Night/Ink) is the primary surface;
+   cream is the light theme. Components use the semantic names below, never
+   the raw palette, so a theme only has to re-point semantics.
+
+   Theme selection
+     default / .theme-dark / [data-theme="dark"]    dark
+     .theme-light / [data-theme="light"]            light
+     [data-theme="auto"]                            the OS setting
+   A .theme-dark element inside a light page (e.g. the dictation pill) gets
+   the dark semantics, because each scope re-declares them.
+
+   App contract: --bg --surface --text --muted --accent --accent-ink --warn
+   --warn-text --line --font-display --font-ui --font-mono exist in every
+   theme. Every text/background pair listed in brand/contrast.ts is checked
+   for WCAG AA (4.5:1) by tests/brand.spec.ts. */
+
+@font-face {
+  font-family: "Instrument Serif";
+  src: url("./fonts/InstrumentSerif-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Instrument Serif";
+  src: url("./fonts/InstrumentSerif-Italic.woff2") format("woff2");
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Geist";
+  src: url("./fonts/Geist-Variable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Geist Mono";
+  src: url("./fonts/GeistMono-Variable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  /* ---- Raw palette (locked + motion pack additions) ---- */
+  --night: #12100E;
+  --ink: #1F1A17;
+  --deep: #2A231E;
+  --fern: #3F6B4B;
+  --fern-glow: #7BC48C;
+  --sprout: #B7CDA3;
+  --butter: #F3D36B;
+  --ember: #EC8A5A;
+  --terracotta: #C0683F;
+  --cream: #F7F1E8;
+  --paper: #FCF8F1;
+
+  /* Purl Spectrum: polish moments only (shimmer, spinner border, italic accent). */
+  --spectrum: linear-gradient(100deg, #7BC48C 0%, #B7CDA3 22%, #F3D36B 48%, #EC8A5A 74%, #C0683F 100%);
+  --spectrum-conic: conic-gradient(from 0deg, #7BC48C, #F3D36B, #EC8A5A, rgb(123 196 140 / 0.15) 60%, #7BC48C);
+
+  /* ---- Type ---- */
+  --font-display: "Instrument Serif", "Iowan Old Style", Georgia, serif;
+  --font-ui: "Geist", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+
+  --text-2xs: 0.75rem;    /* 12  mono labels, kbd */
+  --text-xs: 0.8125rem;   /* 13  timer, chips */
+  --text-sm: 0.875rem;    /* 14  eyebrow, small UI */
+  --text-base: 0.9375rem; /* 15  app body, pill label */
+  --text-md: 1.0625rem;   /* 17  web body */
+  --text-lg: 1.3125rem;   /* 21  lede */
+  --text-xl: 1.75rem;     /* 28  app titles */
+  --display-s: 2.375rem;  /* 38  card titles */
+  --display-m: clamp(2.75rem, 6vw, 4.5rem);   /* 44 to 72  section titles */
+  --display-l: clamp(3rem, 8vw, 6rem);        /* 48 to 96 */
+  --display-xl: clamp(3.5rem, 10vw, 8.25rem); /* 56 to 132  hero */
+
+  --leading-tight: 1;
+  --leading-snug: 1.2;
+  --leading-body: 1.5;
+  --tracking-display: -0.02em;
+  --tracking-ui: -0.01em;
+  --tracking-eyebrow: 0.24em;
+
+  /* ---- Radius ---- */
+  --radius-xs: 6px;    /* kbd */
+  --radius-sm: 8px;
+  --radius-md: 12px;   /* buttons, inputs */
+  --radius-lg: 18px;   /* windows, nav */
+  --radius-xl: 24px;   /* cards */
+  --radius-pill: 999px;
+
+  /* ---- Spacing (4px grid) ---- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+  --space-24: 96px;
+
+  /* ---- Motion (from the pack's lib.js) ---- */
+  --dur-instant: 100ms;
+  --dur-fast: 160ms;
+  --dur-base: 250ms;   /* label crossfades */
+  --dur-slow: 500ms;   /* check draw, orb settle */
+  --dur-morph: 800ms;  /* pill width morph */
+  --dur-shimmer: 1.1s; /* polish text sweep */
+  --dur-spin: 1.6s;    /* spectrum border turn */
+  --dur-breath: 3s;    /* idle breathing */
+  --ease-out: cubic-bezier(0.33, 1, 0.68, 1);          /* easeOutCubic */
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);       /* easeInOutCubic */
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-out-back: cubic-bezier(0.34, 1.4, 0.64, 1);
+  /* 1 - e^(-6.5x)·cos(9x), sampled */
+  --ease-spring: linear(0, 0.349 5%, 0.675 10%, 0.917 15%, 1.062 20%, 1.124 25%, 1.129 30%, 1.103 35%, 1.067 40%, 1.033 45%, 1.008 50%, 0.987 60%, 0.993 75%, 1);
+
+  /* ---- Elevation (dark) ---- */
+  --shadow-sm: 0 2px 8px rgb(0 0 0 / 0.35);
+  --shadow-md: 0 14px 40px rgb(0 0 0 / 0.3);
+  --shadow-lg: 0 30px 80px rgb(0 0 0 / 0.35);
+  --shadow-float: 0 18px 60px rgb(0 0 0 / 0.45), 0 2px 8px rgb(0 0 0 / 0.35);
+  --inset-highlight: inset 0 1px 0 rgb(255 255 255 / 0.06);
+}
+
+/* ---- Dark (primary) ---- */
+:root,
+.theme-dark,
+[data-theme="dark"] {
+  --bg: var(--night);
+  --surface: var(--ink);
+  --raised: var(--deep);
+  --text: var(--cream);
+  --muted: #A89C8F;
+  --accent: var(--butter);
+  --accent-ink: var(--night);
+  --signal: var(--fern-glow);   /* listening, done, checks */
+  --warn: var(--ember);         /* fills, borders, icons */
+  --warn-text: var(--ember);
+  --line: #3A322B;
+  --line-strong: #4F453D;
+  --control-line: #7A6E63;      /* input / switch / secondary-button edges, 3:1 */
+  --focus: var(--butter);
+
+  color-scheme: dark;
+  color: var(--text);
+}
+
+/* ---- Light (cream) ---- */
+.theme-light,
+[data-theme="light"] {
+  --bg: var(--cream);
+  --surface: var(--paper);
+  --raised: #EFE6D8;
+  --text: var(--ink);
+  --muted: #6B5F55;
+  --accent: var(--fern);
+  --accent-ink: var(--paper);
+  --signal: var(--fern);
+  --warn: var(--terracotta);
+  --warn-text: #9A4A28;         /* terracotta itself is 3.5:1 on cream */
+  --line: #E2D7C7;
+  --line-strong: #CDBFAC;
+  --control-line: #8C7E6F;
+  --focus: var(--fern);
+
+  --shadow-sm: 0 1px 2px rgb(31 26 23 / 0.06);
+  --shadow-md: 0 8px 24px rgb(31 26 23 / 0.08);
+  --shadow-lg: 0 24px 60px -12px rgb(31 26 23 / 0.16);
+  --inset-highlight: inset 0 1px 0 rgb(255 255 255 / 0.6);
+
+  color-scheme: light;
+  color: var(--text);
+}
+
+/* ---- Auto: follow the OS (the app sets data-theme="auto" on <html>) ----
+   Same values as the light block above; tests/brand.spec.ts fails if they
+   drift. Duplicated because CSS cannot share one block across a media query. */
+@media (prefers-color-scheme: light) {
+  [data-theme="auto"] {
+    --bg: var(--cream);
+    --surface: var(--paper);
+    --raised: #EFE6D8;
+    --text: var(--ink);
+    --muted: #6B5F55;
+    --accent: var(--fern);
+    --accent-ink: var(--paper);
+    --signal: var(--fern);
+    --warn: var(--terracotta);
+    --warn-text: #9A4A28;         /* terracotta itself is 3.5:1 on cream */
+    --line: #E2D7C7;
+    --line-strong: #CDBFAC;
+    --control-line: #8C7E6F;
+    --focus: var(--fern);
+
+    --shadow-sm: 0 1px 2px rgb(31 26 23 / 0.06);
+    --shadow-md: 0 8px 24px rgb(31 26 23 / 0.08);
+    --shadow-lg: 0 24px 60px -12px rgb(31 26 23 / 0.16);
+    --inset-highlight: inset 0 1px 0 rgb(255 255 255 / 0.6);
+
+    color-scheme: light;
+    color: var(--text);
+  }
+}

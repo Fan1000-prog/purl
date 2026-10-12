@@ -261,7 +261,7 @@ fn position_overlay(overlay: &tauri::WebviewWindow) {
         let (ow, oh) = overlay
             .outer_size()
             .map(|s| (s.width as f64 / wscale, s.height as f64 / wscale))
-            .unwrap_or((200.0, 82.0));
+            .unwrap_or((420.0, 100.0));
         let margin = 8.0;
         let x = wx + ((ww - ow).max(0.0) / 2.0);
         let y = wy + (wh - oh - margin).max(0.0);
@@ -304,9 +304,9 @@ const OVERLAY_HIT_MARGIN: f64 = 6.0;
 
 /// Keep the pill click-through except while the cursor is actually over it.
 ///
-/// The overlay window (200x82 pt) is much bigger than the control it draws —
-/// a 36 pt mic when idle — because it also has room for the recording pill and
-/// the celebration toast. A normal window swallows mouse events across its
+/// The overlay window (420x100 pt) is much bigger than the control it draws —
+/// a ~170 pt "Press ⌘⇧Space" pill when idle — because it also has room for the
+/// recording pill with its ✕ and ✓ buttons and for captions. A normal window swallows mouse events across its
 /// whole rect, not just where pixels are drawn, so the empty space around the
 /// mic became an invisible dead zone: the pill is always-on-top and parked
 /// bottom-center, exactly where apps like Google Meet put their control bar,

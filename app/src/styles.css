@@ -23,10 +23,10 @@ body {
   display: flex;
   flex-direction: column;
   gap: 2px;
-  width: 200px;
+  width: 208px;
   height: 100vh;
   flex: none;
-  padding: 20px 12px;
+  padding: 22px 12px 16px;
   border-right: 1px solid var(--line);
   background: var(--bg);
 }
@@ -36,7 +36,7 @@ body {
   flex: none;
   width: 78px;
   height: 30px;
-  margin: 4px 12px 22px;
+  margin: 2px 12px 26px;
   color: var(--text);
 }
 
@@ -44,16 +44,17 @@ body {
   position: relative;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 11px;
   width: 100%;
-  padding: 9px 12px;
-  border: none;
-  border-radius: var(--r-sm);
+  padding: 8px 12px;
+  border: 1px solid transparent;
+  border-radius: 999px;
   background: none;
   color: var(--muted);
   font-weight: 500;
   text-align: left;
   cursor: pointer;
+  transition: color 0.15s ease, background-color 0.15s ease;
 }
 
 .nav-btn:hover {
@@ -64,7 +65,17 @@ body {
 .nav-btn.active {
   color: var(--text);
   background: var(--surface);
-  box-shadow: inset 0 0 0 1px var(--line);
+  border-color: var(--line);
+}
+
+/* The breath bead marks where you are. */
+.nav-btn.active::after {
+  content: "";
+  width: 6px;
+  height: 6px;
+  margin-left: auto;
+  border-radius: 50%;
+  background: var(--bead);
 }
 
 .nav-btn svg {
@@ -80,13 +91,18 @@ body {
   height: 8px;
   margin-left: auto;
   border-radius: 50%;
-  background: var(--terracotta);
+  background: var(--warn);
+}
+
+/* The update badge takes the bead's place. */
+.nav-settings.active:has(.update-badge:not(.hidden))::after {
+  display: none;
 }
 
 #content {
   flex: 1;
   min-width: 0;
-  padding: 36px 32px 48px;
+  padding: 40px 36px 56px;
 }
 
 .view {
@@ -102,7 +118,7 @@ body {
 #content[data-view="settings"] #view-settings {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 20px;
 }
 
 /* Narrow windows: the rail keeps its icons and drops the words. */
@@ -119,6 +135,9 @@ body {
   .nav-btn {
     justify-content: center;
     padding: 10px;
+  }
+  .nav-btn.active::after {
+    display: none;
   }
   .nav-btn span:not(.update-badge) {
     position: absolute;
@@ -140,7 +159,7 @@ body {
 /* ---------- page furniture ---------- */
 
 .page-title {
-  font-size: 34px;
+  font-size: 40px;
 }
 
 .page-head {
@@ -151,18 +170,19 @@ body {
 }
 
 .lede {
-  margin: -6px 0 0;
+  margin: -8px 0 4px;
+  max-width: 58ch;
   color: var(--muted);
-  font-size: 16px;
+  font-size: 15px;
 }
 
 .panel {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding: 20px;
+  gap: 14px;
+  padding: 20px 22px;
   border: 1px solid var(--line);
-  border-radius: var(--r-md);
+  border-radius: var(--radius-xl);
   background: var(--surface);
 }
 
@@ -173,8 +193,12 @@ body {
   gap: 12px;
 }
 
+/* Section names are small mono eyebrows; the page title carries the serif. */
 .panel-title {
-  font-size: 22px;
+  font: 500 11px/1.2 var(--font-mono);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted);
 }
 
 .panel p {
@@ -183,7 +207,7 @@ body {
 
 .btn-quiet {
   min-height: 30px;
-  padding: 0 10px;
+  padding: 0 12px;
   border-color: transparent;
   background: none;
   color: var(--muted);
@@ -202,9 +226,9 @@ body {
 
 .empty {
   margin: 0;
-  padding: 18px;
+  padding: 22px 18px;
   border: 1px dashed var(--line);
-  border-radius: var(--r-md);
+  border-radius: var(--radius-md);
   color: var(--muted);
   text-align: center;
 }
@@ -212,8 +236,9 @@ body {
 .error-state {
   margin: 0;
   padding: 12px 14px;
+  border: 1px solid var(--line);
   border-left: 3px solid var(--warn);
-  border-radius: var(--r-sm);
+  border-radius: var(--radius-sm);
   background: var(--surface);
   color: var(--warn-text);
 }
@@ -225,7 +250,7 @@ body {
   gap: 12px;
   padding: 16px 18px;
   border: 1px solid var(--warn);
-  border-radius: var(--r-md);
+  border-radius: var(--radius-md);
   background: var(--surface);
 }
 
@@ -241,7 +266,7 @@ body {
   margin: 0;
   min-height: 1.5em;
   color: var(--muted);
-  font-size: 14px;
+  font-size: 13px;
 }
 
 /* ---------- segmented control ---------- */
@@ -256,13 +281,13 @@ body {
 }
 
 .segmented button {
-  min-height: 30px;
+  min-height: 28px;
   padding: 0 14px;
   border: none;
   border-radius: 999px;
   background: none;
   color: var(--muted);
-  font-weight: 600;
+  font-weight: 500;
   cursor: pointer;
 }
 
@@ -294,9 +319,9 @@ body {
 }
 
 .list-item {
-  padding: 12px 14px;
+  padding: 12px 16px;
   border: 1px solid var(--line);
-  border-radius: var(--r-sm);
+  border-radius: var(--radius-md);
   background: var(--surface);
 }
 
@@ -316,7 +341,7 @@ body {
 }
 
 .item-main {
-  font-weight: 600;
+  font-weight: 500;
   overflow-wrap: anywhere;
 }
 
@@ -332,44 +357,53 @@ body {
   align-items: center;
   gap: 4px 12px;
   color: var(--muted);
-  font-size: 13px;
+  font: 400 12px/1.4 var(--font-mono);
+}
+
+.row-meta .btn {
+  font-family: var(--font-ui);
 }
 
 /* ---------- home ---------- */
 
+/* The hero sits on a soft atmospheric field (fern top-left, terracotta
+   bottom-right) with the voice orb on it. Text sits on --surface-level
+   contrast: the field tints are faint enough that --text / --muted keep
+   their --surface ratios (checked as "hero" in contrast.mjs). */
 .home-hero {
+  position: relative;
   display: flex;
   align-items: center;
-  gap: 20px;
+  gap: 24px;
+  padding: 24px 24px 24px 20px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xl);
+  background:
+    radial-gradient(120% 140% at 0% 0%, var(--field-a), transparent 55%),
+    radial-gradient(120% 140% at 100% 100%, var(--field-b), transparent 60%),
+    var(--surface);
+  overflow: hidden;
 }
 
-/* State at a glance; the title says it in words. */
-.state-dot {
+/* The orb's layout box; data-state mirrors the hero state. The orb itself is
+   larger and centred on it, so its glow bleeds past the box. */
+.home-orb {
+  position: relative;
   flex: none;
-  width: 14px;
-  height: 14px;
-  border-radius: 50%;
-  background: var(--accent);
+  width: 132px;
+  height: 132px;
 }
 
-.state-dot[data-state="listening"] {
-  background: var(--warn);
+#home-orb {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  translate: -50% -50%;
 }
 
-.state-dot[data-state="thinking"] {
-  background: var(--muted);
-  animation: state-pulse 1.2s ease-in-out infinite;
-}
-
-.state-dot[data-state="blocked"] {
-  background: var(--line);
-  box-shadow: inset 0 0 0 2px var(--warn);
-}
-
-@keyframes state-pulse {
-  50% {
-    opacity: 0.35;
-  }
+.home-orb[data-state="blocked"] {
+  opacity: 0.45;
+  filter: saturate(0.4);
 }
 
 .home-hero-text {
@@ -377,8 +411,12 @@ body {
   min-width: 0;
 }
 
+.home-hero-text .page-title {
+  font-size: 36px;
+}
+
 .home-hero-text p {
-  margin: 6px 0 0;
+  margin: 8px 0 0;
 }
 
 /* Inverted while recording: --bg on --text is checked by contrast.mjs. */
@@ -390,6 +428,11 @@ body {
 @media (max-width: 560px) {
   .home-hero {
     flex-wrap: wrap;
+    justify-content: center;
+    text-align: center;
+  }
+  .home-hero-text {
+    flex-basis: 100%;
   }
   #toggle-btn {
     width: 100%;
@@ -398,30 +441,33 @@ body {
 
 .last-text {
   font-size: 17px;
+  line-height: 1.55;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
 .stats {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
   gap: 12px;
 }
 
 .stat {
   display: flex;
   flex-direction: column;
+  gap: 2px;
 }
 
 .stat-num {
   font-family: var(--font-display);
-  font-size: 32px;
-  line-height: 1.1;
+  font-size: 34px;
+  line-height: 1.05;
+  font-variant-numeric: tabular-nums;
 }
 
 .stat-label {
   color: var(--muted);
-  font-size: 13px;
+  font: 400 12px/1.3 var(--font-mono);
 }
 
 .history-item {
@@ -460,22 +506,29 @@ body {
 .field {
   display: flex;
   flex-direction: column;
-  gap: 5px;
-  font-size: 14px;
-  font-weight: 600;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 500;
 }
 
+/* Control edges use --control-line, which holds 3:1 against the page. */
 .field input,
 .field textarea,
 .setting select {
   width: 100%;
   min-height: 38px;
   padding: 8px 12px;
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
+  border: 1px solid var(--control-line);
+  border-radius: var(--radius-sm);
   background: var(--surface);
   color: var(--text);
   font-weight: 400;
+}
+
+.field input:hover,
+.field textarea:hover,
+.setting select:hover {
+  border-color: var(--muted);
 }
 
 .field textarea {
@@ -524,11 +577,12 @@ body {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 16px;
+  padding: 18px;
   border: 1px solid var(--line);
-  border-radius: var(--r-md);
+  border-radius: var(--radius-xl);
   background: var(--surface);
   cursor: pointer;
+  transition: border-color 0.15s ease;
 }
 
 .transform-card:hover:not(.editing) {
@@ -551,18 +605,18 @@ body {
 
 .transform-plus {
   font-family: var(--font-display);
-  font-size: 28px;
+  font-size: 30px;
   line-height: 1;
   color: var(--accent);
 }
 
 .card-title {
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .card-sub {
   color: var(--muted);
-  font-size: 14px;
+  font-size: 13px;
 }
 
 .transform-editor {
@@ -606,7 +660,7 @@ body {
 }
 
 .setting-name {
-  font-weight: 600;
+  font-weight: 500;
 }
 
 .setting-help {
@@ -643,13 +697,14 @@ body {
   appearance: none;
   position: relative;
   flex: none;
-  width: 42px;
+  width: 40px;
   height: 24px;
   margin: 0;
+  border: 1px solid var(--control-line);
   border-radius: 999px;
-  background: var(--line);
+  background: var(--bg);
   cursor: pointer;
-  transition: background 0.15s ease;
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
 
 .switch::after {
@@ -657,20 +712,21 @@ body {
   position: absolute;
   top: 3px;
   left: 3px;
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
-  background: var(--paper);
-  box-shadow: 0 1px 2px #1f1a1733;
-  transition: transform 0.15s ease;
+  background: var(--muted);
+  transition: transform 0.15s ease, background 0.15s ease;
 }
 
 .switch:checked {
+  border-color: transparent;
   background: var(--accent);
 }
 
 .switch:checked::after {
-  transform: translateX(18px);
+  background: var(--accent-ink);
+  transform: translateX(16px);
 }
 
 .switch:disabled {
@@ -679,14 +735,14 @@ body {
 }
 
 .switch:indeterminate::after {
-  transform: translateX(9px);
+  transform: translateX(8px);
 }
 
 .credits {
   margin: 0 0 12px;
   padding-left: 18px;
   color: var(--muted);
-  font-size: 14px;
+  font-size: 13px;
 }
 
 .panel > .btn {
@@ -722,7 +778,8 @@ body {
   align-items: center;
   justify-content: center;
   padding: 16px;
-  background: #1f1a1766;
+  background: var(--scrim);
+  backdrop-filter: blur(6px);
 }
 
 .modal-card {
@@ -730,10 +787,11 @@ body {
   flex-direction: column;
   gap: 12px;
   width: min(440px, 100%);
-  padding: 24px;
-  border-radius: var(--r-lg);
+  padding: 26px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xl);
   background: var(--surface);
-  box-shadow: var(--shadow);
+  box-shadow: var(--shadow-md);
 }
 
 .modal-card p {
@@ -751,7 +809,7 @@ body {
   margin-top: 6px;
 }
 
-/* ---------- celebrate: confetti + toast for meaningful moments ---------- */
+/* ---------- celebrate: a quiet toast with the done ripple ---------- */
 
 #celebrate-root {
   position: fixed;
@@ -773,9 +831,9 @@ body {
   position: absolute;
   top: 0;
   left: 0;
-  width: 7px;
-  height: 11px;
-  border-radius: 2px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
   opacity: 0;
   animation: confetti-fall var(--duration) var(--delay) cubic-bezier(0.15, 0.6, 0.4, 1) forwards;
 }
@@ -783,11 +841,11 @@ body {
 @keyframes confetti-fall {
   0% {
     opacity: 1;
-    transform: translate(0, -10px) rotate(0deg);
+    transform: translate(0, -10px) scale(1);
   }
   100% {
     opacity: 0;
-    transform: translate(var(--x), var(--fall, 160px)) rotate(var(--rot));
+    transform: translate(var(--x), var(--fall, 160px)) scale(0.4);
   }
 }
 
@@ -795,17 +853,30 @@ body {
   position: absolute;
   top: 18px;
   left: 50%;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
   transform: translate(-50%, -12px);
   opacity: 0;
-  padding: 10px 16px;
+  padding: 10px 18px 10px 14px;
   border: 1px solid var(--line);
   border-radius: 999px;
   background: var(--surface);
-  box-shadow: var(--shadow);
+  box-shadow: var(--shadow-md);
   color: var(--text);
-  font-weight: 600;
+  font-weight: 500;
   white-space: nowrap;
   transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+/* The breath bead leads every toast. */
+.celebrate-toast::before {
+  content: "";
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--bead);
 }
 
 .celebrate-toast.in {

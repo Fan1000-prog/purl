@@ -7,7 +7,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { getSettings, saveOnboardingComplete, type TranscriptPayload } from "../main";
-import { mountMascot, type Mascot } from "../components/mascot";
+import { mountOrb, type OrbHandle } from "../brand/components";
 import { mountModelDownload, type ModelDownload } from "../components/model-download";
 import { displayHotkey, platform, privacySettingsUrl } from "../platform";
 import type { EngineState, EngineStatusView, Trust } from "../types";
@@ -23,7 +23,7 @@ const PERMISSION_POLL_MS = 2000;
 
 let root: HTMLElement;
 let step: Step = "welcome";
-let mascot: Mascot | null = null;
+let orb: OrbHandle | null = null;
 let download: ModelDownload | null = null;
 let pollTimer: ReturnType<typeof setInterval> | undefined;
 let sttState: EngineState["state"] = "missing";
@@ -56,8 +56,8 @@ function hotkey(): string {
 function teardownStep() {
   clearInterval(pollTimer);
   pollTimer = undefined;
-  mascot?.destroy();
-  mascot = null;
+  orb?.destroy();
+  orb = null;
   download?.destroy();
   download = null;
 }
@@ -98,7 +98,9 @@ const back = () => go(STEPS[STEPS.indexOf(step) - 1]);
 // ---------- 1. welcome ----------
 
 function welcome() {
-  const art = h("div", { className: "onb-mascot" });
+  // Decoration: the title says the same thing in words.
+  const art = h("div", { className: "onb-art" });
+  art.setAttribute("aria-hidden", "true");
   frame(
     "Speak softly. Send it clean.",
     [
@@ -111,10 +113,9 @@ function welcome() {
     [button("Set up Purl", "primary", () => go("permissions"))],
     [art],
   );
-  mascot = mountMascot(art, {
-    size: 120,
-    surface: matchMedia("(prefers-color-scheme: dark)").matches ? "deep" : "cream",
-  });
+  const host = h("div");
+  art.append(host);
+  orb = mountOrb(host, { size: 200 });
 }
 
 // ---------- 2. permissions ----------

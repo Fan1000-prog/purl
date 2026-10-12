@@ -2,7 +2,7 @@
  *  saved a snippet, created a transform, set a hotkey, ran a transform.
  *  Vanilla DOM/CSS, no deps; respects prefers-reduced-motion. */
 
-const COLORS = ["var(--fern)", "var(--terracotta)", "var(--butter)", "var(--sprout)"];
+const COLORS = ["var(--fern-glow)", "var(--sprout)", "var(--butter)", "var(--ember)"];
 const TOAST_MS = 2600;
 
 let root: HTMLDivElement | null = null;

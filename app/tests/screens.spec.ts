@@ -35,7 +35,7 @@ for (const scheme of ["light", "dark"] as const) {
       await expect(page.locator(`.nav-btn[data-view="${s.view}"]`)).toHaveAttribute("aria-current", "page");
     }
     const bg = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
-    expect(bg).toBe(scheme === "light" ? "rgb(247, 241, 232)" : "rgb(42, 35, 30)");
+    expect(bg).toBe(scheme === "light" ? "rgb(247, 241, 232)" : "rgb(18, 16, 14)"); // Cream / Night
     expect(errors).toEqual([]);
   });
 }

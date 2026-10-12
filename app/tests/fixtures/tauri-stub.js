@@ -1,6 +1,7 @@
 // Minimal stand-in for the Tauri IPC bridge so pages that call
 // `invoke` / `listen` load in a plain browser. Tests drive the page with
-// window.__emit(event, payload) and read calls from window.__invoked.
+// window.__emit(event, payload), read calls from window.__invoked, and can
+// set window.__results[cmd] to what a command returns (default null).
 (() => {
   const callbacks = new Map();
   const listeners = new Map();
@@ -20,7 +21,7 @@
         return Promise.resolve(nextId++);
       }
       window.__invoked.push({ cmd, args });
-      return Promise.resolve(null);
+      return Promise.resolve(window.__results?.[cmd] ?? null);
     },
   };
   window.__emit = (event, payload) => {
