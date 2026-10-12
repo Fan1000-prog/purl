@@ -6,7 +6,8 @@
 //! down." pastes literally. Exact-match on the whole clause is the guard
 //! against destroying real dictation with false positives.
 
-/// A key the inject layer can synthesize (macOS virtual keycodes).
+/// A key the inject layer can synthesize. Each platform maps it to its own
+/// key code (see `platform`).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Key {
     Up,
@@ -15,19 +16,6 @@ pub enum Key {
     Right,
     Return,
     Tab,
-}
-
-impl Key {
-    pub fn keycode(self) -> u16 {
-        match self {
-            Key::Left => 123,
-            Key::Right => 124,
-            Key::Down => 125,
-            Key::Up => 126,
-            Key::Return => 36,
-            Key::Tab => 48,
-        }
-    }
 }
 
 /// One piece of an utterance, executed in order at inject time.

@@ -3257,6 +3257,7 @@ dependencies = [
  "tauri-plugin-updater",
  "tempfile",
  "thiserror 2.0.18",
+ "windows 0.61.3",
 ]
 
 [[package]]

@@ -84,7 +84,7 @@ impl Default for Settings {
             smart_model: DEFAULT_SMART_MODEL.into(),
             structure_mode: StructureMode::None,
             command_detection: true,
-            learn_corrections: true,
+            learn_corrections: crate::platform::LEARNING_SUPPORTED,
             onboarding_complete: false,
             field_reading_disclosed: false,
             last_seen_version: String::new(),
@@ -109,6 +109,11 @@ impl Settings {
         }
         if !SMART_MODELS.contains(&self.smart_model.as_str()) {
             self.smart_model = DEFAULT_SMART_MODEL.into();
+        }
+        // Nothing can read other apps' fields here (Windows in v1), so a
+        // settings file carried over from a Mac must not claim it is on.
+        if !crate::platform::LEARNING_SUPPORTED {
+            self.learn_corrections = false;
         }
         self
     }
@@ -354,5 +359,18 @@ mod tests {
             assert!(!on_disk.contains(gone), "{gone} survived a save: {on_disk}");
         }
         assert!(on_disk.contains(r#""cleanup_mode": "fast""#));
+    }
+
+    #[test]
+    fn learning_is_off_wherever_it_is_unsupported() {
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("settings.json");
+        std::fs::write(&p, r#"{"learn_corrections":true}"#).unwrap();
+        let s = Settings::load(&p);
+        assert_eq!(s.learn_corrections, crate::platform::LEARNING_SUPPORTED);
+        assert_eq!(
+            Settings::default().learn_corrections,
+            crate::platform::LEARNING_SUPPORTED
+        );
     }
 }
