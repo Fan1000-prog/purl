@@ -24,12 +24,7 @@ const SERVER_NAME: &str = "llama-server";
 
 /// The bundled `llama-server` under the app's resource dir.
 pub fn llama_server_path(resource_dir: &Path) -> PathBuf {
-    let exe = if cfg!(windows) {
-        "llama-server.exe"
-    } else {
-        SERVER_NAME
-    };
-    resource_dir.join("llama").join(exe)
+    crate::platform::sidecar_path(resource_dir, SERVER_NAME)
 }
 
 /// Arguments for serving `model` on `port`. Thinking is switched off
