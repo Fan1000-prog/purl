@@ -1,7 +1,10 @@
 //! On-device engines and the models they run on.
 
 pub mod download;
+pub mod llm;
 pub mod models;
+pub mod sidecar;
+pub mod stt;
 
 use models::{is_installed, model_dir, registry, Kind, ModelSpec};
 use serde::Serialize;
@@ -9,6 +12,27 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+
+/// Where an engine is in its lifecycle (`EngineState` in `src/types.ts`).
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum EngineState {
+    /// Its model isn't downloaded.
+    Missing,
+    Loading,
+    Ready,
+    /// Downloaded but not in memory; the next use loads it.
+    Idle,
+    Failed {
+        reason: String,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct EngineStatusView {
+    pub stt: EngineState,
+    pub llm: EngineState,
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -144,6 +168,19 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("purl-engine-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         dir
+    }
+
+    #[test]
+    fn engine_state_serializes_as_tagged_object() {
+        let json = serde_json::to_string(&EngineStatusView {
+            stt: EngineState::Failed { reason: "x".into() },
+            llm: EngineState::Missing,
+        })
+        .unwrap();
+        assert_eq!(
+            json,
+            r#"{"stt":{"state":"failed","reason":"x"},"llm":{"state":"missing"}}"#
+        );
     }
 
     #[test]

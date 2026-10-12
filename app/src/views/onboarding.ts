@@ -7,11 +7,12 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { getSettings, saveOnboardingComplete, type TranscriptPayload } from "../main";
-import { mountMascot, type Mascot } from "../components/mascot";
+import { mountOrb, type OrbHandle } from "../brand/components";
 import { mountModelDownload, type ModelDownload } from "../components/model-download";
-import { displayHotkey, platform } from "../platform";
+import { displayHotkey, platform, privacySettingsUrl } from "../platform";
 import type { EngineState, EngineStatusView, Trust } from "../types";
 import { showSmartOffer } from "./smart-offer";
+import { getStatus } from "../status";
 import { FIELD_READING_DISCLOSURE } from "../disclosure";
 
 const STEPS = ["welcome", "permissions", "model", "try"] as const;
@@ -19,21 +20,10 @@ type Step = (typeof STEPS)[number];
 const SPEECH_MODEL = "parakeet-v3";
 const PERMISSION_POLL_MS = 2000;
 
-const SETTINGS_URLS = {
-  macos: {
-    mic: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
-    ax: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
-  },
-  windows: { mic: "ms-settings:privacy-microphone", ax: "" },
-};
-
-interface StatusPayload {
-  accessibility_trusted: boolean;
-}
 
 let root: HTMLElement;
 let step: Step = "welcome";
-let mascot: Mascot | null = null;
+let orb: OrbHandle | null = null;
 let download: ModelDownload | null = null;
 let pollTimer: ReturnType<typeof setInterval> | undefined;
 let sttState: EngineState["state"] = "missing";
@@ -66,8 +56,8 @@ function hotkey(): string {
 function teardownStep() {
   clearInterval(pollTimer);
   pollTimer = undefined;
-  mascot?.destroy();
-  mascot = null;
+  orb?.destroy();
+  orb = null;
   download?.destroy();
   download = null;
 }
@@ -108,7 +98,9 @@ const back = () => go(STEPS[STEPS.indexOf(step) - 1]);
 // ---------- 1. welcome ----------
 
 function welcome() {
-  const art = h("div", { className: "onb-mascot" });
+  // Decoration: the title says the same thing in words.
+  const art = h("div", { className: "onb-art" });
+  art.setAttribute("aria-hidden", "true");
   frame(
     "Speak softly. Send it clean.",
     [
@@ -121,10 +113,9 @@ function welcome() {
     [button("Set up Purl", "primary", () => go("permissions"))],
     [art],
   );
-  mascot = mountMascot(art, {
-    size: 120,
-    surface: matchMedia("(prefers-color-scheme: dark)").matches ? "deep" : "cream",
-  });
+  const host = h("div");
+  art.append(host);
+  orb = mountOrb(host, { size: 200 });
 }
 
 // ---------- 2. permissions ----------
@@ -160,13 +151,13 @@ async function micTrust(): Promise<Trust | "unknown"> {
 
 function permissions() {
   const os = platform();
-  const mic = permissionRow("Microphone", "So Purl can hear you.", SETTINGS_URLS[os].mic);
+  const mic = permissionRow("Microphone", "So Purl can hear you.", privacySettingsUrl("mic")!);
   const rows = [mic.row];
   const ax = os === "macos"
     ? permissionRow(
         "Accessibility",
         `So Purl can paste at your cursor. Without it, your words go to the clipboard. ${FIELD_READING_DISCLOSURE}`,
-        SETTINGS_URLS.macos.ax,
+        privacySettingsUrl("accessibility")!,
       )
     : null;
   if (ax) {
@@ -190,12 +181,7 @@ function permissions() {
   const update = async () => {
     const m = await micTrust();
     mic.set(m);
-    let axTrust: Trust = "not_required";
-    if (ax) {
-      const s = await invoke<StatusPayload>("get_status").catch(() => null);
-      axTrust = s ? (s.accessibility_trusted ? "granted" : "denied") : "denied";
-      ax.set(axTrust);
-    }
+    if (ax) ax.set((await getStatus().catch(() => null))?.pasteTrust ?? "denied");
     note.hidden = m !== "denied";
     note.textContent = "Purl can't hear you without the microphone. You can still continue and turn it on later.";
   };

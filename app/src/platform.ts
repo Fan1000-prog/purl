@@ -19,3 +19,22 @@ export function displayHotkey(hk: string): string {
     .replace(/Control|Ctrl/gi, "⌃")
     .replace(/\+/g, "");
 }
+
+/** Hotkey as keycaps for the dictation pill, one part per cap joined with
+ *  "+": "⌘+⇧+Space" on macOS, "Ctrl+Shift+Space" on Windows. */
+export function pillHotkey(hk: string): string {
+  return hk.split("+").map(displayHotkey).join("+");
+}
+
+const PRIVACY_URLS: Record<Platform, { mic: string; accessibility: string | null }> = {
+  macos: {
+    mic: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone",
+    accessibility: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility",
+  },
+  windows: { mic: "ms-settings:privacy-microphone", accessibility: null },
+};
+
+/** The OS settings page for a permission; null where the OS has no such page. */
+export function privacySettingsUrl(kind: "mic" | "accessibility"): string | null {
+  return PRIVACY_URLS[platform()][kind];
+}

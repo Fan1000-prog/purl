@@ -6,7 +6,7 @@
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import type { ModelDone, ModelProgress, ModelView } from "../types";
+import type { DownloadFailure, ModelDone, ModelProgress, ModelView } from "../types";
 
 export interface ModelDownloadOptions {
   id: string;
@@ -22,9 +22,14 @@ export interface ModelDownload {
   destroy(): void;
 }
 
-// download.rs words a disk-full refusal this way. Retrying can't help until
-// space is freed, so Retry waits for the window to regain focus.
-const DISK_FULL = /^Not enough free space/;
+// Retrying a disk-full refusal can't help until space is freed, so Retry
+// waits for the window to regain focus. Builds that predate `kind` send none
+// (undefined at runtime), so fall back to download.rs's wording there.
+const DISK_FULL_TEXT = /^Not enough free space/;
+
+function isDiskFull(kind: DownloadFailure | null | undefined, error: string | null): boolean {
+  return kind === undefined ? DISK_FULL_TEXT.test(error ?? "") : kind === "disk_full";
+}
 
 export function formatBytes(bytes: number): string {
   return bytes >= 1e9 ? `${(bytes / 1e9).toFixed(1)} GB` : `${Math.round(bytes / 1e6)} MB`;
@@ -60,6 +65,9 @@ export function mountModelDownload(el: HTMLElement, opts: ModelDownloadOptions):
   const errorEl = q<HTMLElement>(".model-error");
 
   let model: ModelView | null = null;
+  // The last failure's kind; models_status doesn't carry one, so a failure
+  // known only from it is judged by its sentence.
+  let failureKind: DownloadFailure | null | undefined;
   let announced: ModelView["state"] | null = null;
   let cancelling = false;
   let readyFired = false;
@@ -108,7 +116,7 @@ export function mountModelDownload(el: HTMLElement, opts: ModelDownloadOptions):
       m.state === "failed" ? "Retry"
       : m.downloaded_bytes > 0 ? `Resume (${formatBytes(m.downloaded_bytes)} of ${formatBytes(m.size_bytes)})`
       : "Download";
-    go.disabled = m.state === "failed" && DISK_FULL.test(m.error ?? "");
+    go.disabled = m.state === "failed" && isDiskFull(failureKind, m.error);
 
     if (focused === go && go.hidden && !cancel.hidden) cancel.focus();
     if (focused === cancel && cancel.hidden && !go.hidden) go.focus();
@@ -126,8 +134,9 @@ export function mountModelDownload(el: HTMLElement, opts: ModelDownloadOptions):
     if (!model) {
       card.dataset.state = "failed";
       errorEl.hidden = false;
-      errorEl.textContent = `Purl doesn't know a model called "${opts.id}".`;
+      // Role first: an alert announces text inserted after it is set.
       errorEl.setAttribute("role", "alert");
+      errorEl.textContent = `Purl doesn't know a model called "${opts.id}".`;
       go.hidden = true;
       return;
     }
@@ -158,8 +167,9 @@ export function mountModelDownload(el: HTMLElement, opts: ModelDownloadOptions):
     }),
     listen<ModelDone>("model-done", (e) => {
       if (!model || e.payload.id !== opts.id) return;
+      failureKind = e.payload.kind;
       if (e.payload.ok) model = { ...model, state: "ready", downloaded_bytes: model.size_bytes, error: null };
-      else if (cancelling) model = { ...model, state: "missing", error: null };
+      else if (cancelling || e.payload.kind === "cancelled") model = { ...model, state: "missing", error: null };
       else model = { ...model, state: "failed", error: e.payload.error };
       cancelling = false;
       render();
@@ -168,15 +178,16 @@ export function mountModelDownload(el: HTMLElement, opts: ModelDownloadOptions):
 
   // Space may have been freed in Finder / Explorer meanwhile.
   const onFocus = () => {
-    if (model?.state === "failed" && DISK_FULL.test(model.error ?? "")) go.disabled = false;
+    if (model?.state === "failed" && isDiskFull(failureKind, model.error)) go.disabled = false;
   };
   window.addEventListener("focus", onFocus);
 
   void refresh().catch((err) => {
     card.dataset.state = "failed";
     errorEl.hidden = false;
-    errorEl.textContent = `Couldn't check the model (${String(err)}).`;
+    // Role first: an alert announces text inserted after it is set.
     errorEl.setAttribute("role", "alert");
+    errorEl.textContent = `Couldn't check the model (${String(err)}).`;
   });
 
   return {

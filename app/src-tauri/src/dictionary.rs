@@ -6,6 +6,16 @@
 
 use std::path::Path;
 
+/// What a fresh install's dictionary holds until the user first saves it.
+/// Parakeet hears the product name as "Pearl"; this entry gives it its
+/// casing and puts it in the smart-cleanup prompt.
+pub const SEED: &str = "Purl\n";
+
+/// The dictionary file's text, or `SEED` when there is no file yet.
+pub fn read_text(user_path: &Path) -> String {
+    std::fs::read_to_string(user_path).unwrap_or_else(|_| SEED.to_string())
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Entry {
     pub term: String,
@@ -38,17 +48,13 @@ impl Dictionary {
         Dictionary { entries }
     }
 
-    /// Load the user's dictionary. A missing or unreadable file is an empty
-    /// dictionary: Purl ships no words of its own.
+    /// Load the user's dictionary. With no file yet (or an unreadable one)
+    /// it is the seed dictionary.
     pub fn load(user_path: &Path) -> Self {
-        std::fs::read_to_string(user_path)
-            .map(|text| Self::parse(&text))
-            .unwrap_or_default()
+        Self::parse(&read_text(user_path))
     }
 
     /// Newline list with expansions, for the LLM cleanup system prompt.
-    // Smart cleanup (plan Task 6) is the caller; unused until then.
-    #[allow(dead_code)]
     pub fn llm_terms(&self) -> String {
         self.entries
             .iter()
@@ -62,7 +68,6 @@ impl Dictionary {
 
     /// A copy with extra terms **prepended**, skipping ones already present.
     /// Used to add learned corrections to the Smart cleanup prompt.
-    #[allow(dead_code)]
     pub fn with_extra_terms(&self, terms: &[String]) -> Dictionary {
         let mut entries: Vec<Entry> = Vec::with_capacity(self.entries.len() + terms.len());
         for t in terms {
@@ -107,9 +112,31 @@ mod tests {
     }
 
     #[test]
-    fn missing_file_is_an_empty_dictionary() {
-        let d = Dictionary::load(std::path::Path::new("/nonexistent/purl-dict.txt"));
-        assert!(d.entries.is_empty());
+    fn missing_file_is_the_seed_dictionary() {
+        let path = std::path::Path::new("/nonexistent/purl-dict.txt");
+        let d = Dictionary::load(path);
+        assert_eq!(
+            d.entries,
+            [Entry {
+                term: "Purl".into(),
+                expansion: None
+            }]
+        );
+        assert_eq!(read_text(path), SEED);
+    }
+
+    #[test]
+    fn a_saved_file_replaces_the_seed() {
+        let path = std::env::temp_dir().join(format!("purl-dict-{}.txt", std::process::id()));
+        std::fs::write(&path, "QBR\n").unwrap();
+        assert_eq!(Dictionary::load(&path).entries.len(), 1);
+        assert_eq!(Dictionary::load(&path).entries[0].term, "QBR");
+        std::fs::write(&path, "").unwrap();
+        assert!(
+            Dictionary::load(&path).entries.is_empty(),
+            "user cleared it"
+        );
+        let _ = std::fs::remove_file(&path);
     }
 
     #[test]

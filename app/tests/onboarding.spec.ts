@@ -21,7 +21,7 @@ async function toModelStep(page: Page) {
 test("happy path: welcome → permissions → download → try it → finish", async ({ page }) => {
   await open(page);
   await expect(panel(page).locator(".onb-title")).toHaveText("Speak softly. Send it clean.");
-  await expect(panel(page).locator(".mascot img")).toHaveAttribute("src", /purl-idle\.svg$/);
+  await expect(panel(page).locator(".onb-art .purl-orb")).toHaveAttribute("data-state", "idle");
   await expect(primary(page)).toHaveText("Set up Purl");
   await primary(page).click();
 
@@ -142,10 +142,15 @@ test("Windows: no Accessibility row or field-reading text, Ctrl hotkey, nothing 
   expect(await lastSaved(page)).toMatchObject({ onboarding_complete: true, field_reading_disclosed: false });
 });
 
-test("reduced motion: welcome mascot is the static pose", async ({ page }) => {
+test("reduced motion: the welcome orb is still", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "reduce" });
   await open(page);
-  await expect(panel(page).locator(".mascot img")).toHaveAttribute("src", /purl-pose-idle\.png$/);
+  const orb = panel(page).locator(".onb-art .purl-orb");
+  await expect(orb).toHaveAttribute("data-state", "idle");
+  const running = await orb.evaluate((el) =>
+    [el, ...el.querySelectorAll("*")].filter((n) => getComputedStyle(n).animationName !== "none").length,
+  );
+  expect(running).toBe(0);
 });
 
 test("360×640: no horizontal scroll on any step", async ({ page }) => {
