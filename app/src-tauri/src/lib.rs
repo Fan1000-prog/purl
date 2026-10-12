@@ -1,11 +1,11 @@
 mod audio;
 #[cfg(target_os = "macos")]
 mod ax_read;
-mod cleanup;
+pub mod cleanup;
 mod corrections;
-mod dictionary;
+pub mod dictionary;
 pub mod engine;
-mod fastclean;
+pub mod fastclean;
 mod history;
 mod inject;
 mod learned;
@@ -20,6 +20,9 @@ mod structure;
 mod transforms;
 mod untrusted;
 mod voice_commands;
+
+/// For the benchmark example, which calls `cleanup::smart_clean`.
+pub use settings::StructureMode;
 
 use serde::Serialize;
 use std::path::PathBuf;

@@ -1,0 +1,11 @@
+file	source	voice	text
+01-email-reschedule.wav	synthetic (macOS say)	Samantha	Hi Maria, thanks for sending the proposal over. Could we move our review to Thursday afternoon? I want to walk the team through the pricing section before we reply.
+02-chat-standup.wav	synthetic (macOS say)	Daniel	Quick update for the channel. The login fix is merged and I am now looking at the export bug. I should have a draft ready before lunch.
+03-note-groceries.wav	synthetic (macOS say)	Samantha	Note to self. Pick up milk, eggs, spinach and coffee on the way home, and remember to book the dentist for next week.
+04-email-followup.wav	synthetic (macOS say)	Daniel	Hello James, I am following up on our call from Monday. Um, could you share the signed contract when you get a chance? Let me know if anything is unclear.
+05-chat-meeting.wav	synthetic (macOS say)	Samantha	Running about ten minutes late to the planning meeting. Please start without me and I will catch up on the notes.
+06-email-thanks.wav	synthetic (macOS say)	Daniel	Thank you all for the great work on the launch this week. The customer feedback has been really positive and the support queue stayed calm.
+07-note-ideas.wav	synthetic (macOS say)	Samantha	Ideas for the onboarding guide. Add a short video, explain the keyboard shortcut early, and show what happens when the microphone is blocked.
+08-chat-question.wav	synthetic (macOS say)	Daniel	Does anyone know who owns the billing dashboard now? I need access to the monthly report for the finance review.
+09-email-intro.wav	synthetic (macOS say)	Samantha	Hi Priya, I would like to introduce you to Tom, who leads our partner team. Um, I think you two should talk about the new referral program.
+10-note-todo.wav	synthetic (macOS say)	Daniel	Tomorrow I need to finish the quarterly summary, reply to the vendor about shipping delays, and review the draft budget with Sarah.
