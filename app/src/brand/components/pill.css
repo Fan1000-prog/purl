@@ -8,6 +8,8 @@
   --pill-body: #17130F;
   --pill-pad-l: 50px;     /* tick glyph + gap */
   --pill-pad-r: 20px;
+  --pill-bar-gap: 3px;
+  --pill-timer-gap: var(--space-6);
 
   position: relative;
   display: flex;
@@ -41,6 +43,13 @@
 .purl-pill[data-state="listening"] .purl-pill__shell { background-color: rgb(247 241 232 / 0.16); }
 .purl-pill[data-state="error"] .purl-pill__shell { background-color: rgb(236 138 90 / 0.45); }
 .purl-pill[data-state="warning"] .purl-pill__shell { background-color: rgb(243 211 107 / 0.35); }
+
+/* Compact: listening fits in 300px, for phones and tight overlays. */
+.purl-pill--compact {
+  --pill-reserve: 300px;
+  --pill-bar-gap: 2px;
+  --pill-timer-gap: var(--space-4);
+}
 
 /* Spectrum border: a conic square spinning behind the body (polishing only). */
 .purl-pill__spin {
@@ -121,7 +130,7 @@
 .purl-pill__bars {
   display: flex;
   align-items: center;
-  gap: 3px;
+  gap: var(--pill-bar-gap);
   height: 42px;
   margin-left: 2px;
 }
@@ -133,7 +142,7 @@
   background: color-mix(in srgb, var(--sprout) calc(var(--e, 0) * 100%), var(--cream));
 }
 .purl-pill__timer {
-  margin-left: var(--space-6);
+  margin-left: var(--pill-timer-gap);
   font-family: var(--font-mono);
   font-size: var(--text-xs);
   font-weight: 400;

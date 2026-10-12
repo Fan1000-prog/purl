@@ -177,8 +177,10 @@ export function mountPill(host: HTMLElement, options: PillOptions): PillHandle {
   renderKeys(keys);
   host.dataset.state = state;
   spoken.textContent = SPOKEN.idle;
-  // Fonts change label widths; refit once they land.
-  document.fonts?.ready.then(fitWidth);
+  // Refit whenever the visible layer's size changes: fonts landing, a new
+  // label, or a size modifier such as .purl-pill--compact toggled by the page.
+  const resize = new ResizeObserver(fitWidth);
+  host.querySelectorAll(".purl-pill__layer").forEach((el) => resize.observe(el));
   fitWidth();
 
   return {
@@ -209,6 +211,7 @@ export function mountPill(host: HTMLElement, options: PillOptions): PillHandle {
     },
     destroy() {
       loop.stop();
+      resize.disconnect();
       clearInterval(timerId);
       unwatch();
       host.replaceChildren();
