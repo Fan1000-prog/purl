@@ -5,16 +5,16 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getVersion } from "@tauri-apps/api/app";
 import { initHome } from "./views/home";
-import { initInsights } from "./views/insights";
+import { initDictionary } from "./views/dictionary";
 import { initSnippets } from "./views/snippets";
-import { initLearning } from "./views/learning";
 import { initTransforms } from "./views/transforms";
+import { initSettings, showSettingsUnavailable } from "./views/settings";
 import { initOnboarding } from "./views/onboarding";
 import { initFieldNotice } from "./views/field-notice";
 import { initUpdates } from "./views/updates";
-import { createHotkeyRecorder, HOTKEY_RECORDER_CANCEL } from "./views/hotkey-recorder";
+import { HOTKEY_RECORDER_CANCEL } from "./views/hotkey-recorder";
 import { celebrate } from "./celebrate";
-import type { CleanupMode, EngineState } from "./types";
+import type { CleanupMode } from "./types";
 
 export interface Settings {
   hotkey: string;
@@ -41,47 +41,32 @@ export function setCurrentHotkey(hk: string): void {
   if (currentSettings) currentSettings.hotkey = hk;
 }
 
-/** Persist onboarding_complete=true without disturbing other settings.
- *  `disclosed` is true only when setup showed the field-reading disclosure
- *  (macOS); then the one-time notice would repeat it, so it is marked seen.
- *  Otherwise the notice still owes it. */
-export async function saveOnboardingComplete(disclosed: boolean): Promise<void> {
-  const s = await invoke<Settings>("get_settings");
-  s.onboarding_complete = true;
-  if (disclosed) s.field_reading_disclosed = true;
-  // Stamp the current version too: someone who just finished setup has
-  // read everything the "what's new" card would tell them, and a changelog
-  // for the only version they have ever run is noise.
-  s.last_seen_version = await getVersion().catch(() => "");
+/** Change some settings. Read-modify-write against the backend, so a stale
+ *  cached copy can never clobber a setting changed elsewhere. */
+export async function saveSettings(patch: Partial<Settings>): Promise<Settings> {
+  const s = { ...(await invoke<Settings>("get_settings")), ...patch };
   await invoke("save_settings", { newSettings: s });
-  if (currentSettings) {
-    currentSettings.onboarding_complete = true;
-    currentSettings.field_reading_disclosed = s.field_reading_disclosed;
-    currentSettings.last_seen_version = s.last_seen_version;
-  }
+  currentSettings = s;
+  return s;
 }
 
-/** Persist field_reading_disclosed=true without disturbing other settings. */
-export async function saveFieldReadingDisclosed(): Promise<void> {
-  const s = await invoke<Settings>("get_settings");
-  s.field_reading_disclosed = true;
-  await invoke("save_settings", { newSettings: s });
-  if (currentSettings) currentSettings.field_reading_disclosed = true;
+/** Persist onboarding_complete=true, and stamp the version: a "what's new"
+ *  card for the only version they have ever run is noise. `disclosed` is
+ *  true only when setup showed the field-reading disclosure (macOS); then the
+ *  one-time notice would repeat it, so it is marked seen. Otherwise the
+ *  notice still owes it. */
+export async function saveOnboardingComplete(disclosed: boolean): Promise<void> {
+  await saveSettings({
+    onboarding_complete: true,
+    ...(disclosed ? { field_reading_disclosed: true } : {}),
+    last_seen_version: await getVersion().catch(() => ""),
+  });
 }
 
 /** Mark this version's "what's new" card as seen, and the field-reading
- *  disclosure with it — the card states it, so the separate notice would be
- *  telling the user the same thing twice. Read-modify-write so a stale cached
- *  copy cannot clobber a setting changed elsewhere. */
+ *  disclosure with it: the card states it. */
 export async function saveVersionSeen(version: string): Promise<void> {
-  const s = await invoke<Settings>("get_settings");
-  s.last_seen_version = version;
-  s.field_reading_disclosed = true;
-  await invoke("save_settings", { newSettings: s });
-  if (currentSettings) {
-    currentSettings.last_seen_version = version;
-    currentSettings.field_reading_disclosed = true;
-  }
+  await saveSettings({ last_seen_version: version, field_reading_disclosed: true });
 }
 
 export interface TranscriptPayload {
@@ -93,16 +78,6 @@ export interface TranscriptPayload {
   cleanup_ms: number;
 }
 
-interface StatusPayload {
-  stt: EngineState;
-  accessibility_trusted: boolean;
-  hotkey: string;
-  state: string;
-}
-
-const $ = <T extends HTMLElement>(id: string): T =>
-  document.getElementById(id) as T;
-
 const refreshers: Record<string, (() => void) | undefined> = {};
 
 /** Views register a refresh function; called on nav click and on new results. */
@@ -113,217 +88,47 @@ export function onViewShow(view: string, fn: () => void) {
 export function switchView(view: string) {
   // Leaving a view must not strand an armed hotkey recorder.
   document.dispatchEvent(new Event(HOTKEY_RECORDER_CANCEL));
-  $<HTMLElement>("content").dataset.view = view;
+  document.getElementById("content")!.dataset.view = view;
   document.querySelectorAll<HTMLButtonElement>(".nav-btn").forEach((b) => {
-    b.classList.toggle("active", b.dataset.view === view);
+    const active = b.dataset.view === view;
+    b.classList.toggle("active", active);
+    if (active) b.setAttribute("aria-current", "page");
+    else b.removeAttribute("aria-current");
   });
   refreshers[view]?.();
 }
 
-/** Settings is one view with four sub-sections routed by the gear flyout. */
-export function switchSettingsSection(section: string) {
-  $<HTMLElement>("view-settings").dataset.section = section;
-  document.querySelectorAll<HTMLButtonElement>(".flyout-item").forEach((b) => {
-    b.classList.toggle("active", b.dataset.settingsSection === section);
-  });
-}
-
-const toggleBtn = $<HTMLButtonElement>("toggle-btn");
-const note = $<HTMLParagraphElement>("note");
-
-function setState(state: string) {
-  $<HTMLSpanElement>("toggle-label").textContent =
-    state === "recording"
-      ? "Stop & transcribe"
-      : state === "processing"
-        ? "Transcribing…"
-        : "Start dictation";
-  toggleBtn.disabled = state === "processing";
-  toggleBtn.classList.toggle("is-recording", state === "recording");
-  toggleBtn.classList.toggle("is-processing", state === "processing");
-}
-
-/** The speech engine as a setup-checklist row: [ok, label, fix]. */
-function speechCheck(stt: EngineState): [boolean, string, string] {
-  switch (stt.state) {
-    case "ready":
-    case "idle":
-      return [true, "Speech model (Parakeet v3) ready", ""];
-    case "loading":
-      return [true, "Speech model (Parakeet v3) loading…", ""];
-    case "failed":
-      return [false, "Speech model (Parakeet v3) failed to load", stt.reason];
-    case "missing":
-      return [false, "Speech model (Parakeet v3) not downloaded", "Download it in Setup (about 670 MB, one time)."];
-  }
-}
-
-function checkItem(ok: boolean, label: string, fix?: string): HTMLLIElement {
-  const li = document.createElement("li");
-  li.className = ok ? "ok" : "bad";
-  const status = document.createElement("span");
-  status.textContent = "●";
-  status.className = "mark";
-  li.appendChild(status);
-  li.appendChild(document.createTextNode(` ${label}`));
-  if (!ok && fix) {
-    const hint = document.createElement("div");
-    hint.className = "fix";
-    hint.textContent = fix;
-    li.appendChild(hint);
-  }
-  return li;
-}
-
-/// "CmdOrCtrl+Shift+Space" → "⌘⇧Space" for the kbd chip.
+/// "CmdOrCtrl+Shift+Space" → "⌘⇧Space" (or "Ctrl+Shift+Space" on Windows).
 export { prettyHotkey };
 
-async function refreshStatus() {
-  const s = await invoke<StatusPayload>("get_status");
-  setState(s.state);
-  $<HTMLElement>("hotkey-label").textContent = prettyHotkey(s.hotkey);
-
-  const list = $<HTMLUListElement>("check-items");
-  list.replaceChildren(
-    checkItem(...speechCheck(s.stt)),
-    checkItem(
-      s.accessibility_trusted,
-      "Accessibility permission — lets it type for you, and read the field it typed into",
-      "System Settings → Privacy & Security → Accessibility → turn on Purl. Until then, transcripts go to your clipboard — paste with ⌘V. The same grant lets it read that field back to catch words you fix (Settings → Learn corrections).",
-    ),
-  );
-}
-
-async function loadSettings(): Promise<Settings> {
-  const s = await invoke<Settings>("get_settings");
-  currentSettings = s;
-  $<HTMLSelectElement>("cleanup-mode").value = s.cleanup_mode;
-  $<HTMLSelectElement>("smart-model").value = s.smart_model;
-  $<HTMLSelectElement>("inject-mode").value = s.inject_mode;
-  $<HTMLSelectElement>("structure-mode").value = s.structure_mode;
-  $<HTMLInputElement>("command-detection").checked = s.command_detection;
-  $<HTMLInputElement>("learn-corrections").checked = s.learn_corrections;
-  return s;
-}
-
-/** Settings failed to load. The controls still hold their HTML defaults,
- *  and for "Learn corrections" that default reads as OFF while the backend
- *  may well have it ON — the app would be showing "not watching" while it
- *  watches. Say so, leave the privacy toggle visibly indeterminate rather
- *  than falsely unchecked, and block Save so a stale form cannot be written
- *  back over the real settings. */
-function showSettingsUnavailable(err: unknown) {
-  $<HTMLSpanElement>("settings-msg").textContent =
-    `Couldn't load your settings (${String(err)}). What's shown below may not match what's saved — reopen the app before changing anything.`;
-  const learn = $<HTMLInputElement>("learn-corrections");
-  learn.indeterminate = true;
-  learn.disabled = true;
-  $<HTMLInputElement>("command-detection").disabled = true;
-  document
-    .querySelectorAll<HTMLButtonElement>("#settings-form button[type=submit]")
-    .forEach((b) => (b.disabled = true));
-}
-
-async function loadGlossary() {
-  $<HTMLTextAreaElement>("glossary-text").value =
-    await invoke<string>("get_glossary");
-}
-
 window.addEventListener("DOMContentLoaded", () => {
-  void refreshStatus();
-  void loadSettings()
-    .then(() => {
-      // Recorder reads the current hotkey from settings — mount after load.
-      $<HTMLElement>("hotkey-recorder").appendChild(
-        createHotkeyRecorder({ onSaved: () => void refreshStatus() }),
-      );
-      initOnboarding();
-      initFieldNotice();
-    })
-    .catch(showSettingsUnavailable);
-  void loadGlossary();
-
   document.querySelectorAll<HTMLButtonElement>(".nav-btn").forEach((b) => {
     b.addEventListener("click", () => switchView(b.dataset.view ?? "home"));
   });
 
-  switchSettingsSection("setup");
-  document.querySelectorAll<HTMLButtonElement>(".nav-settings, .flyout-item").forEach((b) => {
-    b.addEventListener("click", () => {
-      switchSettingsSection(b.dataset.settingsSection ?? "setup");
-      switchView("settings");
-    });
-  });
-
   initHome();
-  initInsights();
+  initDictionary();
   initSnippets();
   initTransforms();
   initUpdates();
-  initLearning();
 
-  // Permissions can change outside the app; poll cheaply.
-  setInterval(() => void refreshStatus(), 5000);
+  void invoke<Settings>("get_settings")
+    .then((s) => {
+      currentSettings = s;
+      initSettings(s);
+      initOnboarding();
+      initFieldNotice();
+    })
+    .catch(showSettingsUnavailable);
 
-  void listen<string>("state", (e) => setState(e.payload));
-  void listen<TranscriptPayload>("result", (e) => {
-    $<HTMLParagraphElement>("note").textContent = e.payload.note ?? "";
+  void listen<TranscriptPayload>("result", () => {
     refreshers["home"]?.();
-    refreshers["insights"]?.();
-    // Same celebration snippets and transforms get. `result` only fires on a
-    // successful run — an empty transcript or a pipeline failure goes out as
-    // `pipeline-error` instead — so this cannot fire on a failed dictation.
-    // Deliberately not conditioned on `used_llm`: falling back to Fast
+    // `result` only fires on a successful run; failures arrive as
+    // `pipeline-error`. Not conditioned on `used_llm`: falling back to Fast
     // cleanup still delivered the user's words.
     celebrate("Your words are ready.");
   });
-  void listen<string>("pipeline-error", (e) => {
-    note.textContent = e.payload;
-  });
   void listen<string>("transform-result", (e) => {
-    celebrate(`"${e.payload}" applied — your text is ready.`);
-  });
-
-  toggleBtn.addEventListener("click", () => void invoke("toggle_recording"));
-
-  $<HTMLFormElement>("settings-form").addEventListener("submit", (e) => {
-    e.preventDefault();
-    const msg = $<HTMLSpanElement>("settings-msg");
-    const newSettings: Settings = {
-      // The recorder owns the hotkey via set_hotkey; pass through unchanged.
-      hotkey: currentSettings?.hotkey ?? "CmdOrCtrl+Shift+Space",
-      inject_mode: $<HTMLSelectElement>("inject-mode").value as
-        | "paste"
-        | "clipboard_only",
-      cleanup_mode: $<HTMLSelectElement>("cleanup-mode").value as CleanupMode,
-      smart_model: $<HTMLSelectElement>("smart-model").value,
-      structure_mode: $<HTMLSelectElement>("structure-mode").value as
-        | "none"
-        | "email"
-        | "coding",
-      command_detection: $<HTMLInputElement>("command-detection").checked,
-      learn_corrections: $<HTMLInputElement>("learn-corrections").checked,
-      onboarding_complete: currentSettings?.onboarding_complete ?? false,
-      field_reading_disclosed: currentSettings?.field_reading_disclosed ?? false,
-      last_seen_version: currentSettings?.last_seen_version ?? "",
-    };
-    invoke("save_settings", { newSettings })
-      .then(() => {
-        currentSettings = newSettings;
-        msg.textContent = "Saved ✓";
-        void refreshStatus();
-      })
-      .catch((err) => {
-        msg.textContent = String(err);
-      });
-  });
-
-  $<HTMLButtonElement>("glossary-save").addEventListener("click", () => {
-    const msg = $<HTMLSpanElement>("glossary-msg");
-    invoke("save_glossary", {
-      content: $<HTMLTextAreaElement>("glossary-text").value,
-    })
-      .then(() => (msg.textContent = "Saved ✓"))
-      .catch((err) => (msg.textContent = String(err)));
+    celebrate(`"${e.payload}" applied. Your text is ready.`);
   });
 });

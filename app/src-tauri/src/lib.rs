@@ -1,4 +1,5 @@
 mod audio;
+#[cfg(target_os = "macos")]
 mod ax_read;
 mod cleanup;
 mod corrections;
@@ -8,6 +9,7 @@ mod fastclean;
 mod history;
 mod inject;
 mod learned;
+mod platform;
 mod settings;
 mod snippets;
 mod stats;
@@ -18,6 +20,7 @@ mod voice_commands;
 
 use serde::Serialize;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
@@ -41,8 +44,8 @@ struct AppState {
     settings: Mutex<Settings>,
     /// Cached copy of transforms.json; hotkey routing reads it on every press.
     transforms: Mutex<Vec<transforms::Transform>>,
-    /// Guards against overlapping pipeline runs.
-    processing: Mutex<bool>,
+    /// Guards against overlapping pipeline runs; see `try_begin_session`.
+    processing: Arc<AtomicBool>,
     last_result: Mutex<Option<TranscriptPayload>>,
     hotkey_press: Mutex<HotkeyPress>,
     /// Set when recording starts; drained by stop to compute record_ms.
@@ -85,9 +88,49 @@ struct TranscriptPayload {
 #[derive(Debug, Clone, Serialize)]
 struct StatusPayload {
     stt: engine::EngineState,
-    accessibility_trusted: bool,
+    /// Whether a synthesized paste can reach other apps. `denied` means
+    /// macOS Accessibility is missing and output goes to the clipboard.
+    paste_trust: platform::Trust,
+    /// False where correction learning isn't built (Windows in v1); the UI
+    /// hides its toggle.
+    learning_supported: bool,
     hotkey: String,
     state: String,
+}
+
+/// `StatusPayload` as a pure function of its inputs, so the platform fields
+/// can be tested without an `AppHandle`.
+fn status_payload_for(
+    stt: engine::EngineState,
+    trust: platform::Trust,
+    hotkey: &str,
+    state: &str,
+) -> StatusPayload {
+    StatusPayload {
+        stt,
+        paste_trust: trust,
+        learning_supported: platform::LEARNING_SUPPORTED,
+        hotkey: hotkey.into(),
+        state: state.into(),
+    }
+}
+
+/// Holds the one-session-at-a-time flag; dropping it frees the flag, so a
+/// panicking pipeline thread can't leave Purl stuck "processing".
+struct SessionGuard(Arc<AtomicBool>);
+
+impl Drop for SessionGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+
+/// Claim the one-session-at-a-time guard. None when a dictation or
+/// transform is already processing; the caller must then do nothing.
+fn try_begin_session(busy: &Arc<AtomicBool>) -> Option<SessionGuard> {
+    busy.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .ok()
+        .map(|_| SessionGuard(busy.clone()))
 }
 
 fn app_support_dir(app: &AppHandle) -> PathBuf {
@@ -410,7 +453,7 @@ impl WatchHost for AppWatchHost {
 /// cleared on the way out unless a newer watcher has taken over, in which case
 /// that watcher owns the dot now.
 fn run_correction_watch(
-    reader: &dyn ax_read::FocusReader,
+    reader: &dyn platform::FocusReader,
     pasted: &str,
     host: &dyn WatchHost,
 ) -> &'static str {
@@ -429,7 +472,7 @@ fn run_correction_watch(
 }
 
 fn watch_span(
-    reader: &dyn ax_read::FocusReader,
+    reader: &dyn platform::FocusReader,
     pasted: &str,
     host: &dyn WatchHost,
 ) -> &'static str {
@@ -515,7 +558,7 @@ fn spawn_correction_watch(app: AppHandle, pasted: String) {
 
     std::thread::spawn(move || {
         let host = AppWatchHost { app, gen };
-        let reader = ax_read::reader();
+        let reader = platform::focus_reader();
         let outcome = run_correction_watch(reader.as_ref(), &pasted, &host);
         host.log(&format!("learning: watch ended ({outcome})"));
     });
@@ -592,7 +635,7 @@ fn start_dictation(app: &AppHandle) {
     let state = app.state::<AppState>();
 
     // Ignore starts while a previous run is still transcribing.
-    if *state.processing.lock().unwrap() {
+    if state.processing.load(Ordering::SeqCst) {
         notify(app, "Still processing the previous dictation — one moment.");
         return;
     }
@@ -628,7 +671,18 @@ fn stop_and_transcribe(app: &AppHandle) {
         Some(r) => r,
         None => return,
     };
-    *state.processing.lock().unwrap() = true;
+    let Some(session) = try_begin_session(&state.processing) else {
+        // A transform got in first. Starting a second pipeline would race
+        // it for the clipboard; drop this recording instead.
+        recorder.cancel();
+        log_line(app, "dictation discarded — another session is processing");
+        set_state(app, "processing");
+        notify(
+            app,
+            "Purl was busy with a transform, so that dictation was discarded. Try again in a moment.",
+        );
+        return;
+    };
     // Hides the overlay too — if the user clicked the pill's ✓, focus must
     // return to their target app before the paste keystroke fires.
     set_state(app, "processing");
@@ -644,8 +698,7 @@ fn stop_and_transcribe(app: &AppHandle) {
     let app = app.clone();
     std::thread::spawn(move || {
         let result = run_pipeline(&app, recorder, record_ms);
-        let state = app.state::<AppState>();
-        *state.processing.lock().unwrap() = false;
+        drop(session);
         set_state(&app, pipeline_end_state(&result));
         if let Err(e) = result {
             log_line(&app, &format!("pipeline ERROR: {e}"));
@@ -693,31 +746,32 @@ fn toggle_dictation(app: &AppHandle) {
 /// `processing` guard with dictation so the two can never overlap.
 fn run_transform(app: &AppHandle, t: transforms::Transform) {
     let state = app.state::<AppState>();
-    {
-        let mut processing = state.processing.lock().unwrap();
-        if *processing || state.recorder.lock().unwrap().is_some() {
-            notify(
-                app,
-                "Busy with another dictation or transform — one moment.",
-            );
-            return;
-        }
-        *processing = true;
-    }
-    if !inject::accessibility_trusted() {
-        *state.processing.lock().unwrap() = false;
+    let session = if state.recorder.lock().unwrap().is_some() {
+        None
+    } else {
+        try_begin_session(&state.processing)
+    };
+    let Some(session) = session else {
+        notify(
+            app,
+            "Busy with another dictation or transform — one moment.",
+        );
+        return;
+    };
+    if !platform::injector().can_inject().can_paste() {
+        drop(session);
         notify(
             app,
             "Transforms need the Accessibility permission to read your selection (see the app window).",
         );
-        inject::prompt_accessibility();
+        platform::injector().request_trust();
         return;
     }
     set_state(app, "processing");
     let app = app.clone();
     std::thread::spawn(move || {
         let result = run_transform_pipeline(&app, &t);
-        *app.state::<AppState>().processing.lock().unwrap() = false;
+        drop(session);
         set_state(&app, "idle");
         match result {
             Ok(()) => {
@@ -752,10 +806,20 @@ fn run_transform_pipeline(app: &AppHandle, t: &transforms::Transform) -> Result<
     };
 
     // The selection is still highlighted in the target app, so the paste
-    // replaces it in place.
-    let paste = inject::inject(&out);
+    // replaces it in place. If the paste fails, `inject` leaves the result on
+    // the clipboard; keep it there rather than restoring the old clipboard.
+    if let Err(e) = inject::inject(&out) {
+        log_line(
+            app,
+            &format!("transform paste FAILED: {e} -> clipboard fallback"),
+        );
+        return Err(format!(
+            "Couldn't paste the {} result, so it's on your clipboard — paste with {}.",
+            t.name,
+            platform::PASTE_SHORTCUT
+        ));
+    }
     inject::restore_clipboard(&previous);
-    paste.map_err(|e| format!("Paste failed: {e}"))?;
 
     log_line(
         app,
@@ -768,6 +832,44 @@ fn run_transform_pipeline(app: &AppHandle, t: &transforms::Transform) -> Result<
         ),
     );
     Ok(())
+}
+
+/// How a dictation reached the user in paste mode.
+#[derive(Debug, PartialEq)]
+enum Delivery {
+    /// Every text segment pasted and every command key sent.
+    Sent,
+    /// A paste or key failed (typically Windows UIPI: the target runs as
+    /// administrator), so the whole dictation went to the clipboard instead.
+    /// Holds the failure, for the log.
+    Copied(String),
+}
+
+/// Paste text segments and send command keys ("go down" → ↓) in order, with
+/// a short pause between them so the target app keeps up. On the first
+/// failure, stop and put the whole dictation (`full`) on the clipboard: the
+/// user gets all of it to paste by hand rather than half of it.
+fn deliver_segments(
+    segments: &[voice_commands::Segment],
+    full: &str,
+    paste: &mut dyn FnMut(&str) -> Result<(), inject::InjectError>,
+    key: &mut dyn FnMut(voice_commands::Key) -> Result<(), inject::InjectError>,
+    copy: &mut dyn FnMut(&str) -> Result<(), inject::InjectError>,
+) -> Result<Delivery, String> {
+    for (i, seg) in segments.iter().enumerate() {
+        if i > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(120));
+        }
+        let sent = match seg {
+            voice_commands::Segment::Text(t) => paste(t),
+            voice_commands::Segment::Key(k) => key(*k),
+        };
+        if let Err(e) = sent {
+            copy(full).map_err(|e| format!("Clipboard failed: {e}"))?;
+            return Ok(Delivery::Copied(e.to_string()));
+        }
+    }
+    Ok(Delivery::Sent)
 }
 
 /// stop recording → transcribe → clean → inject. Runs off the main thread.
@@ -851,6 +953,8 @@ fn run_pipeline(app: &AppHandle, recorder: Recorder, record_ms: u64) -> Result<(
     *app.state::<AppState>().last_result.lock().unwrap() = Some(payload.clone());
     let _ = app.emit("result", &payload);
 
+    let paste_trust = platform::injector().can_inject();
+
     // Pasting while our own window is frontmost would dump the text into
     // Purl itself (e.g. dictation stopped via the in-app button).
     let own_window_focused = app
@@ -862,14 +966,15 @@ fn run_pipeline(app: &AppHandle, recorder: Recorder, record_ms: u64) -> Result<(
         app,
         &format!(
             "pipeline done: transcribe={transcribe_ms}ms cleanup={cleanup_ms}ms used_llm={} \
-             inject_mode={:?} own_window_focused={own_window_focused} accessibility_trusted={}",
-            cleaned.used_llm,
-            settings.inject_mode,
-            inject::accessibility_trusted()
+             inject_mode={:?} own_window_focused={own_window_focused} paste_trust={:?}",
+            cleaned.used_llm, settings.inject_mode, paste_trust
         ),
     );
 
     let has_key_commands = voice_commands::has_keys(&segments);
+    // Set when a synthesized paste or key fails mid-way and the text went to
+    // the clipboard instead.
+    let mut paste_failed = false;
     match settings.inject_mode {
         InjectMode::Paste => {
             if own_window_focused {
@@ -880,32 +985,35 @@ fn run_pipeline(app: &AppHandle, recorder: Recorder, record_ms: u64) -> Result<(
                     app,
                     "Copied to clipboard (Purl was focused). Use the hotkey from your target app to paste automatically.",
                 );
-            } else if inject::accessibility_trusted() {
-                // Walk the segments in order: paste text, synthesize command
-                // keystrokes ("go down" → ↓). A short pause after each key
-                // lets the target app process it before the next paste.
-                for (i, seg) in segments.iter().enumerate() {
-                    if i > 0 {
-                        std::thread::sleep(std::time::Duration::from_millis(120));
-                    }
-                    match seg {
-                        voice_commands::Segment::Text(t) => {
-                            log_line(app, "inject: pasting via Cmd-V");
-                            inject::inject(t).map_err(|e| {
-                                log_line(app, &format!("inject: paste FAILED: {e}"));
-                                format!("Paste failed: {e}")
-                            })?;
-                        }
-                        voice_commands::Segment::Key(k) => {
-                            log_line(app, &format!("inject: voice command key {k:?}"));
-                            inject::send_key(k.keycode()).map_err(|e| {
-                                log_line(app, &format!("inject: key FAILED: {e}"));
-                                format!("Keystroke failed: {e}")
-                            })?;
-                        }
+            } else if paste_trust.can_paste() {
+                let mut paste = |t: &str| {
+                    log_line(app, "inject: pasting via Cmd-V");
+                    inject::inject(t)
+                };
+                let mut key = |k: voice_commands::Key| {
+                    log_line(app, &format!("inject: voice command key {k:?}"));
+                    platform::injector().send_key(k)
+                };
+                match deliver_segments(
+                    &segments,
+                    &expanded,
+                    &mut paste,
+                    &mut key,
+                    &mut inject::copy_to_clipboard,
+                )? {
+                    Delivery::Sent => log_line(app, "inject: all segments sent OK"),
+                    Delivery::Copied(e) => {
+                        log_line(app, &format!("inject: FAILED: {e} -> clipboard fallback"));
+                        notify(
+                            app,
+                            &format!(
+                                "Copied to clipboard — paste with {}.",
+                                platform::PASTE_SHORTCUT
+                            ),
+                        );
+                        paste_failed = true;
                     }
                 }
-                log_line(app, "inject: all segments sent OK");
             } else {
                 log_line(
                     app,
@@ -956,7 +1064,7 @@ fn run_pipeline(app: &AppHandle, recorder: Recorder, record_ms: u64) -> Result<(
     if let Err(e) = learned::record_hits(&learned_path(app), &fired_rules, ts) {
         log_line(app, &format!("learned hits update failed: {e}"));
     }
-    // `accessibility_trusted` is part of the gate, not an implementation
+    // `paste_trust` is part of the gate, not an implementation
     // detail: without it the paste fell back to the clipboard, so there is
     // nothing in any field to watch. Spawning anyway would light the
     // disclosure dot, read nothing, and clear it — training the user to
@@ -972,7 +1080,8 @@ fn run_pipeline(app: &AppHandle, recorder: Recorder, record_ms: u64) -> Result<(
     if settings.learn_corrections
         && matches!(settings.inject_mode, InjectMode::Paste)
         && !own_window_focused
-        && inject::accessibility_trusted()
+        && paste_trust.can_paste()
+        && !paste_failed
     {
         spawn_correction_watch(app.clone(), expanded.clone());
     }
@@ -1217,17 +1326,24 @@ fn get_status(app: AppHandle, state: tauri::State<AppState>) -> StatusPayload {
     let settings = state.settings.lock().unwrap().clone();
     let app_state = if state.recorder.lock().unwrap().is_some() {
         "recording"
-    } else if *state.processing.lock().unwrap() {
+    } else if state.processing.load(Ordering::SeqCst) {
         "processing"
     } else {
         "idle"
     };
-    StatusPayload {
-        stt: stt_status(&app),
-        accessibility_trusted: inject::accessibility_trusted(),
-        hotkey: settings.hotkey,
-        state: app_state.into(),
-    }
+    status_payload_for(
+        stt_status(&app),
+        platform::injector().can_inject(),
+        &settings.hotkey,
+        app_state,
+    )
+}
+
+/// Microphone permission: `granted`, `denied`, or `not_required` (macOS
+/// hasn't asked yet; it will on the first dictation).
+#[tauri::command]
+fn mic_status() -> platform::Trust {
+    platform::mic_status()
 }
 
 #[tauri::command]
@@ -1502,6 +1618,7 @@ pub fn run() {
             suspend_hotkey,
             resume_hotkey,
             get_status,
+            mic_status,
             get_last_result,
             toggle_recording,
             cancel_dictation,
@@ -1540,12 +1657,12 @@ pub fn run() {
             // Paste mode needs Accessibility, and macOS ties the grant to the
             // exact binary — a rebuild silently revokes it. Prompt up front so
             // dictation doesn't quietly degrade to clipboard-only.
-            if wants_paste && !inject::accessibility_trusted() {
+            if wants_paste && !platform::injector().can_inject().can_paste() {
                 log_line(
                     app.handle(),
                     "startup: paste mode but NOT accessibility trusted -> showing grant prompt",
                 );
-                inject::prompt_accessibility();
+                platform::injector().request_trust();
             }
 
             // Tray with quick actions; the window is a settings/status panel.
@@ -1787,7 +1904,11 @@ mod learning_wiring_tests {
     #[test]
     fn disabling_the_setting_yields_no_rules_to_apply() {
         let settings = crate::settings::Settings::default();
-        assert!(settings.learn_corrections, "learning is on by default");
+        assert_eq!(
+            settings.learn_corrections,
+            crate::platform::LEARNING_SUPPORTED,
+            "learning is on by default wherever it is supported"
+        );
     }
 
     /// Pins the stage order in `run_pipeline`: learned rules run *before*
@@ -1865,7 +1986,7 @@ mod correction_watch_tests {
         }
     }
 
-    impl crate::ax_read::FocusReader for FakeReader {
+    impl crate::platform::FocusReader for FakeReader {
         fn read(&self) -> Option<Snapshot> {
             self.reads.set(self.reads.get() + 1);
             self.queue.borrow_mut().pop_front().flatten()
@@ -2071,5 +2192,111 @@ mod correction_watch_tests {
             vec![Event::Indicator(true)],
             "the newer watcher owns the dot now; this one must not clear it"
         );
+    }
+}
+
+#[cfg(test)]
+mod platform_wiring_tests {
+    use super::*;
+    use crate::platform::Trust;
+
+    /// Review focus #5: a second hotkey press while a session is processing
+    /// is refused, and the guard frees up again once the session ends.
+    #[test]
+    fn second_session_rejected_while_processing() {
+        let busy = Arc::new(AtomicBool::new(false));
+        let first = try_begin_session(&busy);
+        assert!(first.is_some());
+        assert!(try_begin_session(&busy).is_none());
+        drop(first);
+        assert!(try_begin_session(&busy).is_some());
+    }
+
+    use crate::inject::InjectError;
+    use crate::voice_commands::{Key, Segment};
+
+    /// Runs `deliver_segments` with fakes; `fail_at` is the call number
+    /// (paste or key, counting from 0) that fails. Returns the result and a
+    /// log of every call made.
+    fn deliver(fail_at: Option<usize>) -> (Result<Delivery, String>, Vec<String>) {
+        let segments = vec![
+            Segment::Text("hello".into()),
+            Segment::Key(Key::Return),
+            Segment::Text("world".into()),
+        ];
+        let log = std::cell::RefCell::new(Vec::new());
+        let step = |what: String| {
+            let n = log.borrow().len();
+            log.borrow_mut().push(what);
+            if Some(n) == fail_at {
+                Err(InjectError::Synthesis("blocked".into()))
+            } else {
+                Ok(())
+            }
+        };
+        let r = deliver_segments(
+            &segments,
+            "hello world",
+            &mut |t| step(format!("paste:{t}")),
+            &mut |k| step(format!("key:{k:?}")),
+            &mut |t| {
+                log.borrow_mut().push(format!("copy:{t}"));
+                Ok(())
+            },
+        );
+        (r, log.into_inner())
+    }
+
+    #[test]
+    fn segments_are_sent_in_order() {
+        let (r, log) = deliver(None);
+        assert_eq!(r, Ok(Delivery::Sent));
+        assert_eq!(log, ["paste:hello", "key:Return", "paste:world"]);
+    }
+
+    #[test]
+    fn failed_key_puts_the_whole_dictation_on_the_clipboard() {
+        let (r, log) = deliver(Some(1));
+        assert!(matches!(r, Ok(Delivery::Copied(_))));
+        // Stops at the failure: "world" is not pasted on its own.
+        assert_eq!(log, ["paste:hello", "key:Return", "copy:hello world"]);
+    }
+
+    #[test]
+    fn failed_first_paste_falls_back_too() {
+        let (r, log) = deliver(Some(0));
+        assert!(matches!(r, Ok(Delivery::Copied(_))));
+        assert_eq!(log, ["paste:hello", "copy:hello world"]);
+    }
+
+    /// A pipeline thread that panics mid-session must not leave Purl
+    /// refusing every later dictation.
+    #[test]
+    fn panicking_session_releases_the_guard() {
+        let busy = Arc::new(AtomicBool::new(false));
+        let held = try_begin_session(&busy).unwrap();
+        let joined = std::thread::spawn(move || {
+            let _held = held;
+            panic!("pipeline blew up");
+        })
+        .join();
+        assert!(joined.is_err());
+        assert!(try_begin_session(&busy).is_some());
+    }
+
+    /// Review focus #1: a lost Accessibility grant reaches the UI as Denied,
+    /// so Home can say "Paste needs Accessibility".
+    #[test]
+    fn trust_denied_surfaces_in_status() {
+        let s = status_payload_for(
+            crate::engine::EngineState::Loading,
+            Trust::Denied,
+            "CmdOrCtrl+Shift+Space",
+            "idle",
+        );
+        assert_eq!(s.paste_trust, Trust::Denied);
+        assert_eq!(s.learning_supported, platform::LEARNING_SUPPORTED);
+        let json = serde_json::to_value(&s).unwrap();
+        assert_eq!(json["paste_trust"], "denied");
     }
 }

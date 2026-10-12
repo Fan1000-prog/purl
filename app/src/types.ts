@@ -58,6 +58,7 @@ export interface ModelProgress {
   downloaded_bytes: number;
   size_bytes: number;
 }
+/** Why a download ended without the model (matches DownloadError::kind). */
 export type DownloadFailure =
   | "disk_full" | "offline" | "http" | "checksum" | "cancelled" | "io" | "stopped";
 export interface ModelDone {

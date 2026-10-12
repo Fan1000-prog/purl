@@ -10,7 +10,7 @@ import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { burstConfetti } from "./celebrate";
 import { mountMascot, type MascotState } from "./components/mascot";
-import type { EngineStatusView } from "./types";
+import { watchSpeechEngine } from "./engine";
 
 type AppState = "idle" | "recording" | "processing";
 type Flash = "done" | "error" | "celebrate";
@@ -43,8 +43,8 @@ let appState: AppState = "idle";
 let flash: Flash | null = null;
 let caption = "";
 let flashTimer: ReturnType<typeof setTimeout> | undefined;
-// The speech model is still loading: a dictation waiting on it says so
-// instead of looking stuck on "Tidying up".
+// A first dictation can wait on the speech model loading; say so, so the
+// pill doesn't look stuck.
 let warming = false;
 
 function currentView(): View {
@@ -57,11 +57,7 @@ function render() {
   document.body.dataset.app = appState;
   mascot.set(VIEWS[view].mascot);
   labelEl.textContent =
-    view === "celebrate"
-      ? caption
-      : view === "processing" && warming
-        ? "Warming up…"
-        : VIEWS[view].label;
+    view === "celebrate" ? caption : view === "processing" && warming ? "Warming up" : VIEWS[view].label;
   requestAnimationFrame(reportHitRect);
 }
 
@@ -87,6 +83,9 @@ function reportHitRect() {
   });
 }
 window.addEventListener("resize", reportHitRect);
+// The pill also changes size on its own: a label swap, or the UI font
+// finishing loading after the first report. Re-report on every change.
+new ResizeObserver(() => reportHitRect()).observe(pill);
 
 // ---------- mic level ring ----------
 
@@ -143,13 +142,6 @@ void listen<string>("state", (e) => {
   }
 });
 
-function showWarming(status: EngineStatusView) {
-  warming = status.stt.state === "loading";
-  render();
-}
-void invoke<EngineStatusView>("engine_status").then(showWarming);
-void listen<EngineStatusView>("engine-status", (e) => showWarming(e.payload));
-
 // Every successful dictation gets "Sent" and a small confetti burst.
 void listen("result", () => {
   showFlash("done", DONE_MS);
@@ -201,6 +193,11 @@ void listen<string>("correction-learned", (e) => celebrate(`Got it, "${e.payload
 // Cmd-V, so nothing at the OS level marks this as new.
 void listen<boolean>("watching-edits", (e) => {
   document.body.classList.toggle("watching", e.payload);
+});
+
+watchSpeechEngine((stt) => {
+  warming = stt.state === "loading";
+  render();
 });
 
 render();
