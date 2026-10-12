@@ -309,12 +309,13 @@ const OVERLAY_HIT_MARGIN: f64 = 6.0;
 /// Keep the pill click-through except while the cursor is actually over it.
 ///
 /// The overlay window (420x100 pt) is much bigger than the control it draws —
-/// a ~170 pt "Press ⌘⇧Space" pill when idle — because it also has room for the
-/// recording pill with its ✕ and ✓ buttons and for captions. A normal window swallows mouse events across its
-/// whole rect, not just where pixels are drawn, so the empty space around the
-/// mic became an invisible dead zone: the pill is always-on-top and parked
-/// bottom-center, exactly where apps like Google Meet put their control bar,
-/// and clicks aimed at those controls died silently.
+/// a ~170 pt "Press ⌘⇧Space" pill when idle — because it also has room for
+/// the recording pill with its ✕ and ✓ buttons and for captions. A normal
+/// window swallows mouse events across its whole rect, not just where pixels
+/// are drawn, so the empty space around the pill became an invisible dead
+/// zone: the pill is always-on-top and parked bottom-center, exactly where
+/// apps like Google Meet put their control bar, and clicks aimed at those
+/// controls died silently.
 ///
 /// macOS delivers no mouse events at all to a click-through window, so hover
 /// can't be detected in the webview. Instead the global cursor position is
