@@ -15,6 +15,7 @@
 import { getVersion } from "@tauri-apps/api/app";
 import { getSettings, saveVersionSeen } from "../main";
 import { platform } from "../platform";
+import { WHATS_NEW_LEARNING } from "../disclosure";
 
 const $ = <T extends HTMLElement>(id: string): T =>
   document.getElementById(id) as T;
@@ -32,6 +33,15 @@ function close(version: string) {
 }
 
 function show(version: string) {
+  const learning = $("fn-learning");
+  const lead = document.createElement("strong");
+  lead.textContent = WHATS_NEW_LEARNING.lead;
+  learning.replaceChildren(lead, WHATS_NEW_LEARNING.body);
+  // Correction learning (and so field reading) exists only on macOS.
+  learning.hidden = platform() !== "macos";
+  // Nothing left to tell on this platform: skip the card rather than show
+  // an empty one.
+  if (![...document.querySelectorAll<HTMLElement>("#field-notice .fn-news")].some((p) => !p.hidden)) return;
   $<HTMLButtonElement>("fn-dismiss").addEventListener("click", () =>
     close(version),
   );

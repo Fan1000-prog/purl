@@ -171,7 +171,7 @@ fn is_bare_greeting(s: &str) -> bool {
         .any(|p| p.split(' ').collect::<Vec<_>>() == words)
 }
 
-/// Whisper writes the vocative comma — "Hi, Maria" — because that is what the
+/// Speech-to-text writes the vocative comma — "Hi, Maria" — because that is what the
 /// grammar books say. Nobody types it in an email, and on its own line it
 /// reads as a pause where the greeting wants none. Drop that one comma.
 ///
@@ -383,7 +383,7 @@ mod tests {
 
     #[test]
     fn drops_the_vocative_comma_in_a_greeting() {
-        // Whisper writes "Hi, Maria"; an email greeting wants "Hi Maria".
+        // Speech-to-text writes "Hi, Maria"; an email greeting wants "Hi Maria".
         let out = apply("Hi, Maria. The report is ready.", StructureMode::Email);
         assert_eq!(out, "Hi Maria.\n\nThe report is ready.");
     }
@@ -470,7 +470,7 @@ mod tests {
         assert_eq!(apply("", StructureMode::Email), "");
     }
 
-    // One-breath dictation: Whisper punctuates with commas only, so the whole
+    // One-breath dictation: speech-to-text may punctuate with commas only, so the whole
     // email arrives as a single sentence. Greeting and sign-off must still be
     // extracted at comma boundaries.
     #[test]

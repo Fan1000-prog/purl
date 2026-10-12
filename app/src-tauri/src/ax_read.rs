@@ -1,5 +1,6 @@
-//! The only Accessibility FFI surface in the app. Everything above it works
-//! against `FocusReader`, so no other module needs a Mac to be tested.
+//! macOS `FocusReader`: the only Accessibility read surface in the app.
+//! Everything above it works against `platform::FocusReader`, so no other
+//! module needs a Mac to be tested.
 //!
 //! `read()` returning None is ordinary, not exceptional: some target apps
 //! genuinely expose nothing (e.g. a canvas-only view with no focused
@@ -30,31 +31,10 @@
 //! diagnoses. Measure here before believing anything about this file.
 
 use crate::corrections::Snapshot;
-
-pub trait FocusReader: Send {
-    fn read(&self) -> Option<Snapshot>;
-
-    /// What the platform reports about the focused element when `read` returns
-    /// None. Empty when there is nothing platform-specific to say.
-    fn diagnose(&self) -> String {
-        String::new()
-    }
-}
-
-pub fn reader() -> Box<dyn FocusReader> {
-    Box::new(SystemReader)
-}
+use crate::platform::FocusReader;
 
 pub struct SystemReader;
 
-#[cfg(not(target_os = "macos"))]
-impl FocusReader for SystemReader {
-    fn read(&self) -> Option<Snapshot> {
-        None
-    }
-}
-
-#[cfg(target_os = "macos")]
 mod mac {
     use super::*;
     use std::collections::HashMap;
@@ -448,7 +428,6 @@ mod mac {
     }
 }
 
-#[cfg(target_os = "macos")]
 impl FocusReader for SystemReader {
     fn read(&self) -> Option<Snapshot> {
         mac::read_focus()
@@ -484,7 +463,7 @@ mod tests {
     fn the_real_reader_never_panics_when_nothing_is_focused() {
         // Under `cargo test` no app is frontmost; the contract is None, not a
         // crash. This is the only test that touches the real FFI.
-        let _ = reader().read();
+        let _ = SystemReader.read();
     }
 
     // The Chrome full-accessibility-tree fallback (`ensure_enhanced_accessibility`,
@@ -501,7 +480,6 @@ mod tests {
     // NOT yet confirmed against a live Chrome/VS Code correction cycle — that
     // needs a machine with Accessibility trust granted to the app. Until
     // someone does that run, treat this fix as diagnosed-and-built, not proven.
-    #[cfg(target_os = "macos")]
     #[test]
     fn enhanced_accessibility_request_never_panics_on_bogus_pids() {
         assert!(
@@ -518,7 +496,6 @@ mod tests {
     // the failure path, where a panic would take the watch thread down. It must
     // survive whatever this machine's focus happens to be, including no
     // Accessibility trust at all, and must always say something.
-    #[cfg(target_os = "macos")]
     #[test]
     fn diagnose_always_returns_something_and_never_panics() {
         let d = SystemReader.diagnose();
@@ -535,7 +512,6 @@ mod tests {
     /// with a text field focused whenever this file changes:
     ///
     ///   cargo test -- --ignored --nocapture ax_live_focus_report
-    #[cfg(target_os = "macos")]
     #[test]
     #[ignore]
     fn ax_live_focus_report() {
@@ -558,7 +534,6 @@ mod tests {
     // rather than the return value: `ensure_enhanced_accessibility` reports
     // whether the *app accepted* the request, which a bogus pid never does, so
     // the return value can't distinguish "budget left" from "budget spent".
-    #[cfg(target_os = "macos")]
     #[test]
     fn enhance_attempts_stop_at_the_budget() {
         // A pid vanishingly unlikely to be a live AX application, so this
@@ -577,7 +552,6 @@ mod tests {
 
     // A pid that cannot name a process must not be charged against any budget
     // or reach the FFI at all.
-    #[cfg(target_os = "macos")]
     #[test]
     fn impossible_pids_are_rejected_before_the_ffi() {
         for pid in [0, -1, i32::MIN] {
