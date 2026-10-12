@@ -1,0 +1,203 @@
+name: release
+# A version tag (v0.9.0, v0.9.0-rc.1) builds, signs and smoke-tests both
+# installers, then one publish job creates a draft GitHub Release with the
+# installers, updater files and latest.json. A manual run (workflow_dispatch)
+# does the same build and smoke test with a throwaway macOS identity and no
+# updater key, keeps the installers as workflow artifacts and never
+# publishes. Never triggered by pull requests: signing secrets must not reach
+# PR-controlled code. See docs/RELEASING.md.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+env:
+  # Only a pushed version tag publishes. A manual run started on a tag ref
+  # still gets the throwaway identity and no secrets.
+  PUBLISH: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Tag matches the app version
+        if: env.PUBLISH == 'true'
+        run: node scripts/release-assets.mjs check-tag "$GITHUB_REF_NAME"
+      - uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: app/src-tauri
+          key: release-${{ matrix.target }}
+      - name: ONNX Runtime (Windows)
+        if: runner.os == 'Windows'
+        uses: ./.github/actions/onnxruntime-windows
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+
+      - name: Fetch llama-server
+        env:
+          PURL_TARGET: ${{ matrix.target }}
+        run: node scripts/fetch-llama.mjs
+
+      - run: npm ci
+        working-directory: app
+
+      # macOS ties the Accessibility grant to the signing identity, so every
+      # release is signed by the same "Purl Self-Signed" certificate. Other
+      # runs make a throwaway certificate with the same name, so they sign
+      # exactly the way a release does.
+      - name: Signing identity (macOS)
+        if: runner.os == 'macOS'
+        env:
+          MACOS_CERT_P12_BASE64: ${{ env.PUBLISH == 'true' && secrets.MACOS_CERT_P12_BASE64 || '' }}
+          MACOS_CERT_PASSWORD: ${{ env.PUBLISH == 'true' && secrets.MACOS_CERT_PASSWORD || '' }}
+        run: |
+          if [[ "$PUBLISH" != "true" ]]; then
+            work="$(mktemp -d)"
+            openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=Purl Self-Signed" \
+              -addext "keyUsage=critical,digitalSignature" \
+              -addext "extendedKeyUsage=critical,codeSigning" \
+              -keyout "$work/key.pem" -out "$work/cert.pem"
+            openssl pkcs12 -export -inkey "$work/key.pem" -in "$work/cert.pem" -out "$work/cert.p12" \
+              -passout pass:throwaway -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1
+            MACOS_CERT_P12_BASE64="$(base64 -i "$work/cert.p12")"
+            MACOS_CERT_PASSWORD=throwaway
+            export MACOS_CERT_P12_BASE64 MACOS_CERT_PASSWORD
+          fi
+          scripts/macos-import-cert.sh
+
+      - name: Build
+        working-directory: app
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ env.PUBLISH == 'true' && secrets.TAURI_SIGNING_PRIVATE_KEY || '' }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ env.PUBLISH == 'true' && secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD || '' }}
+        run: |
+          args=(--target "${{ matrix.target }}")
+          if [[ "$PUBLISH" != "true" ]]; then
+            # No updater key outside a release, so no signed updater files.
+            args+=(--config '{"bundle":{"createUpdaterArtifacts":false}}')
+          elif [[ -z "$TAURI_SIGNING_PRIVATE_KEY" ]]; then
+            echo "::error::The TAURI_SIGNING_PRIVATE_KEY secret is not set (see docs/RELEASING.md)."
+            exit 1
+          fi
+          npx tauri build "${args[@]}"
+
+      - name: Collect assets
+        run: |
+          extra=()
+          if [[ "$PUBLISH" != "true" ]]; then extra=(--no-updater); fi
+          node scripts/release-assets.mjs collect --target "${{ matrix.target }}" --out dist-release "${extra[@]}"
+
+      - name: Smoke test (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          version="$(node -p 'require("./app/src-tauri/tauri.conf.json").version')"
+          mnt="$(mktemp -d)"
+          hdiutil attach -nobrowse -readonly -mountpoint "$mnt" dist-release/Purl_aarch64.dmg
+          trap 'hdiutil detach "$mnt" -quiet || true' EXIT
+          app="$mnt/Purl.app"
+          codesign --verify --deep --strict "$app"
+          codesign -dvv "$app" 2>&1 | grep -F "Authority=Purl Self-Signed"
+          exe="$app/Contents/MacOS/$(defaults read "$app/Contents/Info" CFBundleExecutable)"
+          log="${TMPDIR%/}/purl-smoke.log"
+          rm -f "$log"
+          "$exe" --smoke
+          grep -E "^SMOKE OK ${version//./\\.} " "$log"
+
+      - name: Smoke test (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $version = (Get-Content app/src-tauri/tauri.conf.json -Raw | ConvertFrom-Json).version
+          $p = Start-Process dist-release/Purl_x64-setup.exe -ArgumentList '/S' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "installer exited with $($p.ExitCode)" }
+
+          # Per-user install (bundle.windows.nsis.installMode = currentUser).
+          $dir = Join-Path $env:LOCALAPPDATA 'Purl'
+          $exe = Join-Path $dir 'purl.exe'
+          if (-not (Test-Path $exe)) { throw "purl.exe not installed in $dir; found: $(Get-ChildItem $dir -Name)" }
+          # Speech links ONNX Runtime dynamically; its DLL must sit beside purl.exe.
+          if (-not (Test-Path (Join-Path $dir 'onnxruntime.dll'))) { throw "onnxruntime.dll is not beside purl.exe" }
+
+          $log = Join-Path $env:TEMP 'purl-smoke.log'
+          Remove-Item $log -ErrorAction SilentlyContinue
+          $p = Start-Process $exe -ArgumentList '--smoke' -Wait -PassThru
+          $line = Get-Content $log -First 1 -ErrorAction SilentlyContinue
+          if ($p.ExitCode -ne 0) { throw "purl.exe --smoke exited with $($p.ExitCode): $line" }
+          if ($line -notmatch "^SMOKE OK $([regex]::Escape($version)) ") { throw "unexpected smoke log: $line" }
+          Write-Host $line
+
+          Start-Process (Join-Path $dir 'uninstall.exe') -ArgumentList '/S' -Wait
+          # The NSIS uninstaller re-launches itself from %TEMP% and returns at once.
+          for ($i = 0; $i -lt 30 -and (Test-Path $exe); $i++) { Start-Sleep 1 }
+          if (Test-Path $exe) { throw "uninstall left $exe behind" }
+
+      - name: Remove the signing keychain
+        if: always() && runner.os == 'macOS'
+        run: |
+          if [[ -n "${PURL_KEYCHAIN:-}" ]]; then security delete-keychain "$PURL_KEYCHAIN" || true; fi
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: purl-${{ matrix.target }}
+          path: dist-release/
+          if-no-files-found: error
+
+
+  # The only job that can write to the repo, and it runs no build code:
+  # it creates the draft release and uploads what the builds produced.
+  publish:
+    needs: build
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: purl-*
+          path: dist-release
+          merge-multiple: true
+      - name: Write latest.json
+        run: |
+          node scripts/make-latest-json.mjs --tag "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --dir dist-release --out dist-release/latest.json
+      - name: Create the draft release and upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          draft="$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft 2>/dev/null || true)"
+          if [[ "$draft" == "false" ]]; then
+            echo "::error::$GITHUB_REF_NAME is already published; refusing to overwrite its assets. Cut a new tag."
+            exit 1
+          fi
+          if [[ -z "$draft" ]]; then
+            pre=()
+            if [[ "$GITHUB_REF_NAME" == *-* ]]; then pre=(--prerelease); fi
+            gh release create "$GITHUB_REF_NAME" --draft "${pre[@]}" --verify-tag \
+              --title "Purl ${GITHUB_REF_NAME#v}" --generate-notes
+          fi
+          gh release upload "$GITHUB_REF_NAME" dist-release/* --clobber
