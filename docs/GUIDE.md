@@ -78,8 +78,8 @@ Smart has a time limit: 6 seconds for the 2B model, 10 for the 4B. If it
 runs out of time, or its answer looks wrong (empty, far too long or too
 short), Purl pastes the Fast result instead. You always get your text.
 
-Smart runs a helper program, `llama-server`, that starts when you begin
-talking and stops after 5 minutes without use. The first start takes a while
+Smart runs a helper program, `llama-server`. It starts when Purl opens with
+Smart on, and when you begin talking, and stops after 5 minutes without use. The first start takes a while
 (19.1 s on the benchmark machine; see the
 [README benchmark](../README.md#benchmark)), so your first Smart dictation
 may come back as Fast.
