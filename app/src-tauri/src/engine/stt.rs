@@ -134,19 +134,22 @@ impl ParakeetEngine {
         }
     }
 
-    /// Let go of the model files so they can be deleted. False while the
-    /// model is loading or decoding.
-    pub fn release(&self) -> bool {
-        {
+    /// Let go of the model and run `remove`, which deletes its files, all
+    /// under the engine's lock, so a dictation can't start loading
+    /// half-deleted files (and fail). `None`, without running `remove`,
+    /// while the model is loading or decoding.
+    pub fn release_and<R>(&self, remove: impl FnOnce() -> R) -> Option<R> {
+        let removed = {
             let mut slot = self.slot.lock().unwrap();
             match &slot.phase {
-                Phase::Loading => return false,
-                Phase::Loaded(d) if Arc::strong_count(d) > 1 => return false,
+                Phase::Loading => return None,
+                Phase::Loaded(d) if Arc::strong_count(d) > 1 => return None,
                 _ => slot.phase = Phase::Unloaded,
             }
-        }
+            remove()
+        };
         self.notify();
-        true
+        Some(removed)
     }
 
     /// Unloaded/Failed + installed → Loading. True when this call claimed it.
@@ -541,9 +544,36 @@ mod tests {
     fn release_refuses_while_loading() {
         let e = slow_stub_engine(300, Arc::new(AtomicUsize::new(0)));
         e.warm();
-        assert!(!e.release());
+        assert!(e.release_and(|| ()).is_none());
         e.transcribe(&[0.0; 16000]).unwrap();
-        assert!(e.release());
+        assert!(e.release_and(|| ()).is_some());
         assert_eq!(e.status(), EngineState::Idle);
+    }
+
+    /// A load asked for while the files are being deleted waits, then finds
+    /// the model gone: Missing, never a failed load of half-deleted files.
+    #[test]
+    fn nothing_loads_while_the_model_is_deleted() {
+        let installed = Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let loads = Arc::new(AtomicUsize::new(0));
+        let (i, l) = (installed.clone(), loads.clone());
+        let e = ParakeetEngine::with_backend(
+            Box::new(move || i.load(Ordering::SeqCst)),
+            Box::new(move || {
+                l.fetch_add(1, Ordering::SeqCst);
+                Err("the model files are half gone".into())
+            }),
+        );
+        let warm = e.clone();
+        let removed = e.release_and(|| {
+            let dictation = std::thread::spawn(move || warm.warm());
+            std::thread::sleep(Duration::from_millis(100));
+            installed.store(false, Ordering::SeqCst);
+            dictation
+        });
+        removed.unwrap().join().unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+        assert_eq!(loads.load(Ordering::SeqCst), 0);
+        assert_eq!(e.status(), EngineState::Missing);
     }
 }

@@ -1596,17 +1596,18 @@ fn delete_model(app: AppHandle, state: tauri::State<AppState>, id: String) -> Re
     if state.downloads.is_running(spec.id) {
         return Err("Cancel the download first".into());
     }
-    if spec.id == engine::stt::MODEL_ID {
-        release_speech_model(&state)?;
-    }
-    let smart_model = state.settings.lock().unwrap().smart_model.clone();
-    if spec.id == smart_model {
-        release_smart_model(&state)?;
-    }
     let dir = engine::models::model_dir(&app_support_dir(&app), spec.id);
-    match std::fs::remove_dir_all(&dir) {
-        Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.to_string()),
-        _ => {}
+    let remove = || match std::fs::remove_dir_all(&dir) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.to_string()),
+        _ => Ok(()),
+    };
+    let smart_model = state.settings.lock().unwrap().smart_model.clone();
+    if spec.id == engine::stt::MODEL_ID {
+        delete_speech_model(&state, remove)?;
+    } else if spec.id == smart_model {
+        delete_smart_model(&state, remove)?;
+    } else {
+        remove()?;
     }
     state.downloads.clear_error(spec.id);
     if spec.kind == engine::models::Kind::Llm {
@@ -1652,12 +1653,18 @@ fn warm_smart(state: &AppState) {
     }
 }
 
-/// Stop the Smart server so its model files can be deleted. Before `setup`
-/// has built the engine nothing is running, so there is nothing to release.
-fn release_smart_model(state: &AppState) -> Result<(), String> {
+/// Stop the Smart server and delete its model with `remove`, with no start
+/// in between. Before `setup` has built the engine nothing is running, so
+/// there is nothing to stop.
+fn delete_smart_model(
+    state: &AppState,
+    remove: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
     match state.llm.get() {
-        Some(engine) if !engine.release() => Err("Stop using this model first".into()),
-        _ => Ok(()),
+        Some(engine) => engine
+            .release_and(remove)
+            .unwrap_or_else(|| Err("Stop using this model first".into())),
+        None => remove(),
     }
 }
 
@@ -1733,12 +1740,18 @@ fn warm_speech(state: &AppState) {
     }
 }
 
-/// Let go of the speech model so its files can be deleted. Before `setup`
-/// has built the engine nothing is loaded, so there is nothing to release.
-fn release_speech_model(state: &AppState) -> Result<(), String> {
+/// Let go of the speech model and delete its files with `remove`, with no
+/// load in between. Before `setup` has built the engine nothing is loaded,
+/// so there is nothing to let go of.
+fn delete_speech_model(
+    state: &AppState,
+    remove: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
     match state.stt.get() {
-        Some(engine) if !engine.release() => Err("Stop using this model first".into()),
-        _ => Ok(()),
+        Some(engine) => engine
+            .release_and(remove)
+            .unwrap_or_else(|| Err("Stop using this model first".into())),
+        None => remove(),
     }
 }
 
@@ -1925,16 +1938,24 @@ pub fn run() {
 
 #[cfg(test)]
 mod speech_engine_access_tests {
-    use super::{release_smart_model, release_speech_model, warm_smart, warm_speech, AppState};
+    use super::{delete_smart_model, delete_speech_model, warm_smart, warm_speech, AppState};
 
     /// A webview can call download/delete before `setup` builds the engine.
     #[test]
     fn commands_before_setup_do_not_panic() {
         let state = AppState::default();
         warm_speech(&state);
-        assert_eq!(release_speech_model(&state), Ok(()), "nothing loaded yet");
+        assert_eq!(
+            delete_speech_model(&state, || Ok(())),
+            Ok(()),
+            "nothing loaded yet"
+        );
         warm_smart(&state);
-        assert_eq!(release_smart_model(&state), Ok(()), "no server yet");
+        assert_eq!(
+            delete_smart_model(&state, || Ok(())),
+            Ok(()),
+            "no server yet"
+        );
     }
 }
 
