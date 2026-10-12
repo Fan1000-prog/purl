@@ -1138,10 +1138,12 @@ fn save_settings(app: AppHandle, new_settings: Settings) -> Result<(), String> {
     *state.settings.lock().unwrap() = new_settings;
     // A different Smart model replaces the running server.
     if let Some(path) = engine::llm::model_path(&app_support_dir(&app), &smart_model) {
-        llm(&app).set_model(path);
+        if let Some(engine) = state.llm.get() {
+            engine.set_model(path);
+        }
     }
     if smart_on {
-        llm(&app).warm();
+        warm_smart(&state);
     }
 
     if old_hotkey != new_hotkey {
@@ -1553,7 +1555,7 @@ fn download_model(app: AppHandle, state: tauri::State<AppState>, id: String) -> 
                 .cleanup_mode
                 == CleanupMode::Smart;
             if result.is_ok() && smart_on {
-                llm(&app).warm();
+                warm_smart(&app.state::<AppState>());
             }
         }
         let _ = app.emit("model-done", done);
@@ -1578,8 +1580,8 @@ fn delete_model(app: AppHandle, state: tauri::State<AppState>, id: String) -> Re
         release_speech_model(&state)?;
     }
     let smart_model = state.settings.lock().unwrap().smart_model.clone();
-    if spec.id == smart_model && !llm(&app).release() {
-        return Err("Stop using this model first".into());
+    if spec.id == smart_model {
+        release_smart_model(&state)?;
     }
     let dir = engine::models::model_dir(&app_support_dir(&app), spec.id);
     match std::fs::remove_dir_all(&dir) {
@@ -1620,6 +1622,23 @@ fn llm(app: &AppHandle) -> Arc<LlamaServerEngine> {
             .get()
             .expect("smart engine is set in setup"),
     )
+}
+
+/// Start the Smart server in the background. A no-op before `setup` has
+/// built the engine (a webview can save settings that early).
+fn warm_smart(state: &AppState) {
+    if let Some(engine) = state.llm.get() {
+        engine.warm();
+    }
+}
+
+/// Stop the Smart server so its model files can be deleted. Before `setup`
+/// has built the engine nothing is running, so there is nothing to release.
+fn release_smart_model(state: &AppState) -> Result<(), String> {
+    match state.llm.get() {
+        Some(engine) if !engine.release() => Err("Stop using this model first".into()),
+        _ => Ok(()),
+    }
 }
 
 /// The hard deadline for Smart cleanup: the larger model gets longer. On
@@ -1885,7 +1904,7 @@ pub fn run() {
 
 #[cfg(test)]
 mod speech_engine_access_tests {
-    use super::{release_speech_model, warm_speech, AppState};
+    use super::{release_smart_model, release_speech_model, warm_smart, warm_speech, AppState};
 
     /// A webview can call download/delete before `setup` builds the engine.
     #[test]
@@ -1893,6 +1912,8 @@ mod speech_engine_access_tests {
         let state = AppState::default();
         warm_speech(&state);
         assert_eq!(release_speech_model(&state), Ok(()), "nothing loaded yet");
+        warm_smart(&state);
+        assert_eq!(release_smart_model(&state), Ok(()), "no server yet");
     }
 }
 
