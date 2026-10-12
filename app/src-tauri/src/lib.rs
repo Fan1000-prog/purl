@@ -1672,7 +1672,7 @@ fn start_llm(app: &AppHandle) {
     // Windows ties the server to a Job Object instead of a PID file.
     let pid_file = cfg!(unix).then(|| app_data.join("llama.pid"));
     if let Some(pid_file) = &pid_file {
-        engine::sidecar::reap_stale(pid_file);
+        engine::sidecar::reap_stale(pid_file, &bin);
     }
     let engine = LlamaServerEngine::new(bin, model, pid_file);
     let emit_app = app.clone();
