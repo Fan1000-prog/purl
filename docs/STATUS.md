@@ -20,6 +20,7 @@ Spec: [`docs/specs/2026-10-09-purl-design.md`](specs/2026-10-09-purl-design.md)
 | 8b | Shared design system from the motion pack; the app on it: live dictation pill, Home voice orb, every screen | #14 |
 | 9 | Onboarding: permissions, in-app speech-model download, try-it step, 90-second field-reading disclosure | #6 |
 | 10 | All screens and Settings rebuilt; disclosure text from one source | #9 |
+| 11 | Benchmark: Parakeet vs whisper.cpp base.en, Fast and Smart cleanup ([how to run](../bench/README.md)) | #17 |
 | 14 | Landing page on the motion design (private repo, not deployed) | landing repo |
 | — | Spec/plan amendments: no Intel Mac in v1, "Purl" in the dictionary, motion-pack design, random LLM fences | #8, #11 |
 
@@ -27,7 +28,6 @@ Spec: [`docs/specs/2026-10-09-purl-design.md`](specs/2026-10-09-purl-design.md)
 
 | Task | What | PR |
 |---|---|---|
-| 11 | Benchmark: Parakeet vs whisper.cpp base.en, Fast and Smart cleanup | #17 |
 | 5 (fix) | Parakeet decoder fix for a token-repeat bug; re-measuring | not opened yet |
 | — | Review follow-ups: Smart sidecar hardening | #18 |
 | 13 | README, guide, privacy page, case study | #19 |
@@ -41,7 +41,7 @@ Spec: [`docs/specs/2026-10-09-purl-design.md`](specs/2026-10-09-purl-design.md)
 
 ## Benchmark (Apple M1 Pro)
 
-From `bench/results/2026-10-12-apple-m1-pro.json` on the benchmark PR (#17, not merged yet). Apple M1 Pro, 10 cores,
+From [`bench/results/2026-10-12-apple-m1-pro.json`](../bench/results/2026-10-12-apple-m1-pro.json). Apple M1 Pro, 10 cores,
 16 GB, macOS 26.4.1. The machine was busy during the run (load average 18 to 26).
 
 | What | Parakeet v3 (Purl) | whisper.cpp base.en |
