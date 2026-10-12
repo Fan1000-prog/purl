@@ -51,7 +51,7 @@ fn distance(a: &str, b: &str) -> usize {
     prev[b.len()]
 }
 
-/// True when `to` is plausibly Whisper mis-hearing `from`: same word in a
+/// True when `to` is plausibly speech-to-text mis-hearing `from`: same word in a
 /// different case, or a small edit relative to the word's length. No longer a
 /// gate on what gets *learned* — it decides which rules are safe to *apply*
 /// after a single sighting (see `learned`).

@@ -166,10 +166,18 @@ impl ParakeetEngine {
         claimed
     }
 
+    /// Run the loader and record the outcome. A panic inside it (ONNX
+    /// Runtime, a corrupt file) is caught and recorded as Failed, so the
+    /// engine never sits in Loading with waiters blocked on it.
     fn finish_load(&self) {
-        let phase = match (self.loader)() {
-            Ok(d) => Phase::Loaded(Arc::new(Mutex::new(d))),
-            Err(e) => Phase::Failed(e),
+        let loaded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| (self.loader)()));
+        let phase = match loaded {
+            Ok(Ok(d)) => Phase::Loaded(Arc::new(Mutex::new(d))),
+            Ok(Err(e)) => Phase::Failed(e),
+            Err(panic) => Phase::Failed(format!(
+                "the speech model crashed while loading: {}",
+                panic_message(&panic)
+            )),
         };
         {
             let mut slot = self.slot.lock().unwrap();
@@ -222,16 +230,58 @@ impl ParakeetEngine {
     }
 }
 
+impl ParakeetEngine {
+    /// Drop `decoder` if it is still the loaded model, so the next use loads
+    /// a fresh one. For a decoder that panicked (and poisoned its mutex).
+    fn discard(&self, decoder: &SharedDecoder) {
+        let dropped = {
+            let mut slot = self.slot.lock().unwrap();
+            let current = matches!(&slot.phase, Phase::Loaded(d) if Arc::ptr_eq(d, decoder));
+            if current {
+                slot.phase = Phase::Unloaded;
+            }
+            current
+        };
+        if dropped {
+            self.notify();
+        }
+    }
+}
+
+/// The text of a caught panic, when it has one.
+fn panic_message(panic: &Box<dyn std::any::Any + Send>) -> String {
+    panic
+        .downcast_ref::<&str>()
+        .map(|s| s.to_string())
+        .or_else(|| panic.downcast_ref::<String>().cloned())
+        .unwrap_or_else(|| "unknown panic".into())
+}
+
 impl SttEngine for ParakeetEngine {
     fn transcribe(&self, pcm16k_mono: &[f32]) -> Result<String, SttError> {
         let decoder = self.acquire()?;
-        let parts = {
-            let mut d = decoder.lock().unwrap();
-            segment(pcm16k_mono, MAX_SEGMENT_SECS)
-                .into_iter()
-                .map(|seg| d.decode(seg))
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(SttError::Engine)?
+        // A decoder that panicked mid-decode is unusable: its mutex is
+        // poisoned and its state unknown. Let it go and report an error;
+        // the next dictation loads a fresh model.
+        // `None`: the mutex was poisoned by an earlier panic.
+        let decoded = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let mut d = decoder.lock().ok()?;
+            Some(
+                segment(pcm16k_mono, MAX_SEGMENT_SECS)
+                    .into_iter()
+                    .map(|seg| d.decode(seg))
+                    .collect::<Result<Vec<_>, _>>(),
+            )
+        }));
+        let parts = match decoded {
+            Ok(Some(Ok(parts))) => parts,
+            Ok(Some(Err(e))) => return Err(SttError::Engine(e)),
+            Ok(None) | Err(_) => {
+                self.discard(&decoder);
+                return Err(SttError::Engine(
+                    "the speech engine crashed; try again".into(),
+                ));
+            }
         };
         self.slot.lock().unwrap().last_used = Instant::now();
         let parts: Vec<&str> = parts
@@ -307,8 +357,17 @@ mod tests {
     /// would show up here as a different version.
     #[test]
     fn links_the_pinned_onnx_runtime() {
-        let info = ort::info();
-        assert!(info.contains("rel-1.28."), "{info}");
+        // The version string, not `ort::info()`: Microsoft's release DLL
+        // reports git-branch=HEAD in its build info, so only the API's own
+        // version names the release on both platforms.
+        // SAFETY: OrtGetApiBase returns a static, non-null table, and
+        // GetVersionString returns a static, NUL-terminated string.
+        let version = unsafe {
+            let base = ort::sys::OrtGetApiBase();
+            std::ffi::CStr::from_ptr(((*base).GetVersionString)())
+        }
+        .to_string_lossy();
+        assert!(version.starts_with("1.28."), "{version}");
     }
 
     #[test]
@@ -384,6 +443,58 @@ mod tests {
         let e = slow_stub_engine(0, loads.clone());
         assert_eq!(e.transcribe(&[0.0; 16000]).unwrap(), "ok");
         assert_eq!(e.status(), EngineState::Ready);
+    }
+
+    #[test]
+    fn a_panicking_loader_ends_failed_not_stuck_loading() {
+        // Background load (warm) and inline load (transcribe) alike.
+        let e = ParakeetEngine::with_backend(Box::new(|| true), Box::new(|| panic!("ort blew up")));
+        e.warm();
+        let t0 = std::time::Instant::now();
+        while e.status() == EngineState::Loading {
+            assert!(t0.elapsed() < Duration::from_secs(5), "stuck in Loading");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(
+            matches!(e.status(), EngineState::Failed { reason } if reason.contains("ort blew up"))
+        );
+        // Inline: the retry panics too, and transcribe returns an error.
+        assert!(matches!(
+            e.transcribe(&[0.0; 16000]),
+            Err(SttError::Engine(_))
+        ));
+    }
+
+    /// Decodes fine on every load but the first, where it panics mid-decode
+    /// (poisoning the decoder's mutex on the way out).
+    struct PanicsOnce(bool);
+    impl Decoder for PanicsOnce {
+        fn decode(&mut self, _pcm: &[f32]) -> Result<String, String> {
+            if self.0 {
+                panic!("decoder blew up");
+            }
+            Ok("ok".into())
+        }
+    }
+
+    #[test]
+    fn a_panicking_decoder_is_dropped_and_reloaded() {
+        let loads = Arc::new(AtomicUsize::new(0));
+        let l = loads.clone();
+        let e = ParakeetEngine::with_backend(
+            Box::new(|| true),
+            Box::new(move || {
+                let first = l.fetch_add(1, Ordering::SeqCst) == 0;
+                Ok(Box::new(PanicsOnce(first)) as Box<dyn Decoder>)
+            }),
+        );
+        assert!(matches!(
+            e.transcribe(&[0.0; 16000]),
+            Err(SttError::Engine(_))
+        ));
+        assert_eq!(e.status(), EngineState::Idle, "the broken model was let go");
+        assert_eq!(e.transcribe(&[0.0; 16000]).unwrap(), "ok");
+        assert_eq!(loads.load(Ordering::SeqCst), 2);
     }
 
     #[test]

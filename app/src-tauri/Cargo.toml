@@ -29,11 +29,18 @@ tauri-plugin-updater = "2.10.1"
 tauri-plugin-process = "2.3.1"
 sha2 = "0.10"
 fs4 = "0.13"
+getrandom = "0.3"
 transcribe-rs = { version = "0.3", features = ["onnx"] }
 ort = { version = "=2.0.0-rc.13", default-features = false }
 
+[dev-dependencies]
+tempfile = "3"
+
 [target.'cfg(target_os = "macos")'.dependencies]
 core-graphics = "0.24"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61", features = ["Win32_Foundation", "Win32_NetworkManagement_IpHelper", "Win32_Networking_WinSock", "Win32_Security", "Win32_System_JobObjects", "Win32_System_Registry", "Win32_System_Threading", "Win32_UI_Input_KeyboardAndMouse"] }
 
 # The benchmark (bench/README.md). `test = true` so `cargo test` runs its
 # WER unit tests.

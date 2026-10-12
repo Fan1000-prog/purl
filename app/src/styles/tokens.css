@@ -1,103 +1,46 @@
-/* Purl design tokens. Palette and type come from the locked logo pack
-   (Purl-Design/01-logo-locked). Components use the semantic names
-   (--bg, --surface, --text, …), never the raw palette, so the dark theme
-   only has to re-point semantics.
+/* App layer on top of the vendored brand tokens (src/brand/tokens.css, see
+   src/brand/README.md). Every colour, font, radius and shadow comes from the
+   brand file; never redefine those here. This file only adds a few
+   decorative names the app needs, built from the brand palette, and none of
+   them is ever a text colour.
 
-   Every text/background pair named here is checked for WCAG AA by
-   tests/contrast.mjs, in both themes. Terracotta itself is 3.5–3.9:1 on
-   cream, paper and deep, so it is a fill/border colour (--warn); error
-   text uses --warn-text, a shade that passes. */
+   Text/background pairs are checked for WCAG AA by tests/contrast.mjs, in
+   both themes. */
 
-@font-face {
-  font-family: "Instrument Serif";
-  src: url("/fonts/InstrumentSerif-Regular.woff2") format("woff2");
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: "Instrument Serif";
-  src: url("/fonts/InstrumentSerif-Italic.woff2") format("woff2");
-  font-weight: 400;
-  font-style: italic;
-  font-display: swap;
-}
-@font-face {
-  font-family: "Figtree";
-  src: url("/fonts/Figtree-Regular.woff2") format("woff2");
-  font-weight: 400;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: "Figtree";
-  src: url("/fonts/Figtree-Medium.woff2") format("woff2");
-  font-weight: 500;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: "Figtree";
-  src: url("/fonts/Figtree-SemiBold.woff2") format("woff2");
-  font-weight: 600;
-  font-style: normal;
-  font-display: swap;
-}
-@font-face {
-  font-family: "Figtree";
-  src: url("/fonts/Figtree-Bold.woff2") format("woff2");
-  font-weight: 700;
-  font-style: normal;
-  font-display: swap;
-}
+@import "../brand/tokens.css";
 
-/* `.theme-light` pins the light palette regardless of the OS theme — the
-   overlay floats over other apps and is always a Paper pill. */
 :root,
-.theme-light {
-  --cream: #F7F1E8;
-  --paper: #FCF8F1;
-  --ink: #1F1A17;
-  --deep: #2A231E;
-  --fern: #3F6B4B;
-  --sprout: #B7CDA3;
-  --butter: #F3D36B;
-  --terracotta: #C0683F;
-  --peach: #F1D3BF;
-
-  --bg: var(--cream);
-  --surface: var(--paper);
-  --text: var(--ink);
-  --muted: #6B5F55;
-  --accent: var(--fern);
-  --accent-ink: var(--paper);
-  --warn: var(--terracotta);
-  --warn-text: #A4532F;
-  --line: #E6DCCD;
-
-  --font-display: "Instrument Serif", Georgia, serif;
-  --font-ui: "Figtree", system-ui, sans-serif;
-
-  --r-sm: 8px;
-  --r-md: 14px;
-  --r-lg: 22px;
-  --shadow: 0 1px 2px #1f1a170f, 0 8px 24px #1f1a1714;
-
-  color-scheme: light;
+.theme-dark,
+[data-theme="dark"] {
+  /* The breath tick from the logo: bead + sound arc. The bead alone is the
+     one warm dot that marks "you are here". */
+  --bead: var(--butter);
+  --arc: var(--sprout);
+  /* Atmospheric field behind the Home hero (fern top-left, terracotta
+     bottom-right), faint enough that text keeps its --surface contrast. */
+  --field-a: rgb(63 107 75 / 0.32);
+  --field-b: rgb(192 104 63 / 0.18);
+  --scrim: rgb(18 16 14 / 0.6);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root:not(.theme-light) {
-    --bg: var(--deep);
-    --surface: #352D27;
-    --text: var(--paper);
-    --muted: #BFB2A4;
-    --accent: var(--sprout);
-    --accent-ink: var(--deep);
-    --warn-text: #E08A62;
-    --line: #4A3F37;
-    --shadow: 0 1px 2px #0000002e, 0 8px 24px #00000038;
+.theme-light,
+[data-theme="light"] {
+  --bead: var(--terracotta);
+  --arc: var(--fern);
+  --field-a: rgb(63 107 75 / 0.1);
+  --field-b: rgb(192 104 63 / 0.08);
+  --scrim: rgb(31 26 23 / 0.4);
+}
 
-    color-scheme: dark;
+/* The main window sets data-theme="auto" and follows the OS, like the brand
+   file. Same values as the light block above; tests/contrast.mjs fails if
+   they drift. */
+@media (prefers-color-scheme: light) {
+  [data-theme="auto"] {
+    --bead: var(--terracotta);
+    --arc: var(--fern);
+    --field-a: rgb(63 107 75 / 0.1);
+    --field-b: rgb(192 104 63 / 0.08);
+    --scrim: rgb(31 26 23 / 0.4);
   }
 }

@@ -1,0 +1,40 @@
+name: ONNX Runtime (Windows)
+description: >
+  Fetch Microsoft's CPU-only ONNX Runtime 1.28.0, pinned by sha256, and set
+  ORT_LIB_LOCATION / ORT_PREFER_DYNAMIC_LINK / PATH so the build links it
+  dynamically. pyke's CDN has no CPU-only Windows build (only DirectML/GPU
+  ones), and its build assumes AVX2.
+runs:
+  using: composite
+  steps:
+    # Only the downloaded zip is cached, under a key that carries its pinned
+    # hash. The zip is re-verified on every run, cache hit or not, and the
+    # DLL is always extracted fresh from the verified zip.
+    - name: Cache ONNX Runtime zip
+      uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+      with:
+        path: ${{ runner.temp }}/onnxruntime-zip
+        key: onnxruntime-win-x64-1.28.0-abef733dacbe2f571547a7150b479b5cb9cc0df22f96c24983a42cadb1b4f8bc
+    - name: Fetch and verify ONNX Runtime
+      shell: pwsh
+      working-directory: ${{ runner.temp }}
+      run: |
+        $sha = "abef733dacbe2f571547a7150b479b5cb9cc0df22f96c24983a42cadb1b4f8bc"
+        $url = "https://github.com/microsoft/onnxruntime/releases/download/v1.28.0/onnxruntime-win-x64-1.28.0.zip"
+        $zip = Join-Path $env:RUNNER_TEMP "onnxruntime-zip/ort.zip"
+        New-Item -ItemType Directory -Force (Split-Path $zip) | Out-Null
+        function Test-Zip { (Test-Path $zip) -and ((Get-FileHash $zip -Algorithm SHA256).Hash.ToLower() -eq $sha) }
+        if (-not (Test-Zip)) {
+          if (Test-Path $zip) { Write-Warning "cached onnxruntime zip failed its sha256 check; downloading again" }
+          for ($i = 1; $i -le 3; $i++) {
+            try { Invoke-WebRequest $url -OutFile $zip; break } catch { if ($i -eq 3) { throw }; Start-Sleep 10 }
+          }
+          if (-not (Test-Zip)) { throw "onnxruntime zip sha256 mismatch: $((Get-FileHash $zip -Algorithm SHA256).Hash.ToLower())" }
+        }
+        $dir = Join-Path $env:RUNNER_TEMP "onnxruntime"
+        Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue
+        Expand-Archive $zip -DestinationPath $dir -Force
+        $lib = Join-Path $dir "onnxruntime-win-x64-1.28.0/lib"
+        "ORT_LIB_LOCATION=$lib" >> $env:GITHUB_ENV
+        "ORT_PREFER_DYNAMIC_LINK=1" >> $env:GITHUB_ENV
+        $lib >> $env:GITHUB_PATH

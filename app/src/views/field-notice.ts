@@ -14,6 +14,8 @@
 
 import { getVersion } from "@tauri-apps/api/app";
 import { getSettings, saveVersionSeen } from "../main";
+import { platform } from "../platform";
+import { WHATS_NEW_LEARNING } from "../disclosure";
 
 const $ = <T extends HTMLElement>(id: string): T =>
   document.getElementById(id) as T;
@@ -31,6 +33,15 @@ function close(version: string) {
 }
 
 function show(version: string) {
+  const learning = $("fn-learning");
+  const lead = document.createElement("strong");
+  lead.textContent = WHATS_NEW_LEARNING.lead;
+  learning.replaceChildren(lead, WHATS_NEW_LEARNING.body);
+  // Correction learning (and so field reading) exists only on macOS.
+  learning.hidden = platform() !== "macos";
+  // Nothing left to tell on this platform: skip the card rather than show
+  // an empty one.
+  if (![...document.querySelectorAll<HTMLElement>("#field-notice .fn-news")].some((p) => !p.hidden)) return;
   $<HTMLButtonElement>("fn-dismiss").addEventListener("click", () =>
     close(version),
   );
@@ -44,9 +55,12 @@ export function initFieldNotice() {
   // top of it.
   if (s?.onboarding_complete !== true) return;
 
+  // Field reading (correction learning) only exists on macOS.
+  const owesDisclosure = platform() === "macos" && s.field_reading_disclosed === false;
+
   void getVersion()
     .then((version) => {
-      if (s.last_seen_version !== version || s.field_reading_disclosed === false) {
+      if (s.last_seen_version !== version || owesDisclosure) {
         show(version);
       }
     })
@@ -54,6 +68,6 @@ export function initFieldNotice() {
       // Version unreadable. Fall back to the disclosure alone — that is the
       // part that must not be skipped. Recording an empty version leaves the
       // card due again next launch, which is the safe direction to fail.
-      if (s.field_reading_disclosed === false) show("");
+      if (owesDisclosure) show("");
     });
 }

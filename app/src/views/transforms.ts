@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { onViewShow, prettyHotkey } from "../main";
 import { createHotkeyRecorder } from "./hotkey-recorder";
 import { celebrate } from "../celebrate";
+import type { ModelView } from "../types";
 
 export interface Transform {
   id: string;
@@ -15,6 +16,7 @@ export interface Transform {
 let transforms: Transform[] = [];
 /** Card currently expanded into its editor; null = all collapsed. */
 let editingId: string | null = null;
+let loadError: string | null = null;
 
 const $ = <T extends HTMLElement>(id: string): T =>
   document.getElementById(id) as T;
@@ -24,8 +26,24 @@ function msg(text: string) {
 }
 
 async function refresh(): Promise<void> {
-  transforms = await invoke<Transform[]>("get_transforms");
+  try {
+    transforms = await invoke<Transform[]>("get_transforms");
+    loadError = null;
+  } catch (err) {
+    transforms = [];
+    loadError = `Couldn't load your transforms (${String(err)}). Try reopening Purl.`;
+  }
   render();
+  void showSmartNeeded();
+}
+
+/** Transforms run on Smart cleanup's model; say so while none is downloaded. */
+async function showSmartNeeded() {
+  const banner = $("transforms-needs-smart");
+  const models = await invoke<ModelView[]>("models_status").catch(() => null);
+  const ready = models?.some((m) => m.kind === "llm" && m.state === "ready") ?? true;
+  banner.classList.toggle("hidden", ready);
+  banner.textContent = "Transforms use Smart cleanup's model. Download it in Settings, under Cleanup, to run them.";
 }
 
 /** Save the full list; on failure re-sync from the backend (a hotkey
@@ -73,7 +91,7 @@ function buildEditor(t: Transform, isNew: boolean): HTMLElement {
   prompt.rows = 4;
   prompt.value = t.prompt;
   prompt.placeholder =
-    "What should the AI do with the selected text? e.g. “Translate to French, keeping the tone.”";
+    "What should Purl do with the selected text? For example: “Translate to French, keeping the tone.”";
 
   editor.append(field("Name", name), field("Description", description), field("Instructions", prompt));
 
@@ -117,7 +135,7 @@ function buildEditor(t: Transform, isNew: boolean): HTMLElement {
 
   const saveBtn = document.createElement("button");
   saveBtn.type = "button";
-  saveBtn.className = "ghost";
+  saveBtn.className = "btn btn-primary";
   saveBtn.textContent = isNew ? "Add transform" : "Save";
   saveBtn.addEventListener("click", () => {
     const edited: Transform = {
@@ -145,7 +163,7 @@ function buildEditor(t: Transform, isNew: boolean): HTMLElement {
   if (!t.builtin && !isNew) {
     const del = document.createElement("button");
     del.type = "button";
-    del.className = "linklike";
+    del.className = "btn btn-quiet";
     del.textContent = "Delete";
     del.addEventListener("click", () => {
       editingId = null;
@@ -156,7 +174,7 @@ function buildEditor(t: Transform, isNew: boolean): HTMLElement {
 
   const cancel = document.createElement("button");
   cancel.type = "button";
-  cancel.className = "linklike";
+  cancel.className = "btn btn-quiet";
   cancel.textContent = "Cancel";
   cancel.addEventListener("click", () => {
     editingId = null;
@@ -243,7 +261,7 @@ function buildCreateCard(): HTMLElement {
     title.textContent = "Create your own";
     const sub = document.createElement("span");
     sub.className = "card-sub";
-    sub.textContent = "Describe any rewrite — the AI applies it";
+    sub.textContent = "Describe any rewrite and Purl applies it";
     card.append(plus, title, sub);
     const open = () => {
       editingId = "new";
@@ -262,7 +280,20 @@ function buildCreateCard(): HTMLElement {
 
 function render() {
   const list = $<HTMLDivElement>("transform-list");
-  list.replaceChildren(...transforms.map(buildCard), buildCreateCard());
+  if (loadError) {
+    // Saving over a list we couldn't read would wipe it: no cards, no create.
+    list.replaceChildren();
+    msg("");
+    const error = document.createElement("p");
+    error.className = "error-state";
+    error.setAttribute("role", "alert");
+    error.textContent = loadError;
+    list.append(error);
+  } else {
+    list.replaceChildren(...transforms.map(buildCard), buildCreateCard());
+  }
+  $("transforms-empty").classList.toggle("hidden", loadError !== null || transforms.length > 0);
+  $<HTMLButtonElement>("transforms-reset").hidden = loadError !== null;
 }
 
 export function initTransforms() {

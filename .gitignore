@@ -1,5 +1,6 @@
 node_modules/
 target/
+target*/
 dist/
 *.part
 .DS_Store
@@ -7,3 +8,5 @@ dist/
 test-results/
 playwright-report/
 .lighthouseci/
+app/src-tauri/vendor/llama/*
+!app/src-tauri/vendor/llama/.gitkeep

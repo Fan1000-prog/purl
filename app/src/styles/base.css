@@ -9,11 +9,12 @@
 
 html {
   font-family: var(--font-ui);
-  font-size: 15px;
+  font-size: 14px;
   line-height: 1.5;
   color: var(--text);
   background: var(--bg);
   -webkit-font-smoothing: antialiased;
+  letter-spacing: -0.005em;
 }
 
 body {
@@ -25,12 +26,13 @@ h2,
 h3 {
   font-family: var(--font-display);
   font-weight: 400;
-  line-height: 1.15;
+  line-height: 1.1;
+  letter-spacing: -0.01em;
   margin: 0;
 }
 
 h1 {
-  font-size: 34px;
+  font-size: 40px;
 }
 
 h2 {
@@ -45,18 +47,21 @@ a {
   color: var(--accent);
 }
 
+/* One ring everywhere, offset so it reads on any fill. */
 :focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
 
 kbd {
-  font: 600 12px/1 var(--font-ui);
-  padding: 3px 7px;
+  display: inline-block;
+  font: 500 12px/1 var(--font-mono);
+  padding: 4px 7px 3px;
   border: 1px solid var(--line);
   border-bottom-width: 2px;
   border-radius: 6px;
   background: var(--surface);
+  color: var(--text);
 }
 
 input,
@@ -65,6 +70,7 @@ select,
 button {
   font: inherit;
   color: inherit;
+  letter-spacing: inherit;
 }
 
 .btn {
@@ -77,8 +83,9 @@ button {
   border: 1px solid var(--line);
   border-radius: 999px;
   background: var(--surface);
-  font-weight: 600;
+  font-weight: 500;
   cursor: pointer;
+  transition: border-color 0.15s ease, background-color 0.15s ease, filter 0.15s ease;
 }
 
 .btn:hover:not(:disabled) {
@@ -98,13 +105,13 @@ button {
 
 .btn-primary:hover:not(:disabled) {
   border-color: transparent;
-  filter: brightness(1.08);
+  filter: brightness(1.06);
 }
 
 .card {
   background: var(--surface);
   border: 1px solid var(--line);
-  border-radius: var(--r-md);
+  border-radius: var(--radius-md);
   padding: 20px;
 }
 
@@ -114,6 +121,14 @@ button {
 
 .warn-text {
   color: var(--warn-text);
+}
+
+/* Small uppercase label in the mono face: section eyebrows, state names. */
+.eyebrow {
+  font: 500 11px/1.2 var(--font-mono);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--muted);
 }
 
 @media (prefers-reduced-motion: reduce) {

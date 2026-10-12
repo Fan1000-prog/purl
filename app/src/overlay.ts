@@ -1,16 +1,21 @@
-// Persistent voice pill: Purl the mascot plus a state label on a Paper pill.
-// Idle shows the mascot alone (click to start dictating); recording adds
-// ✕ cancel and ✓ finish-and-transcribe around "Listening", with a Sprout ring
-// that swells with the mic level ("audio-level" events from the recorder
-// thread); processing is "Tidying up"; a finished dictation flashes "Sent".
+// Persistent voice pill: the brand dictation pill (src/brand/components),
+// driven by the app's events. Idle shows "Press <hotkey>" (click to start
+// dictating); recording shows the live waveform and timer from "audio-level"
+// events, with ✕ cancel and ✓ finish-and-transcribe beside it; processing is
+// "Polishing" ("Warming up…" while the speech model loads); a finished
+// dictation flashes "Sent clean"; a failure flashes "Didn't catch that".
 // Transforms and learned corrections reuse the pill for a caption with a 5 s
-// countdown, plus a confetti burst.
+// countdown.
 
+// Must stay first: installs the dev-only Tauri mock (?mock=1) for previews.
+import "./dev/mock-tauri";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
-import { burstConfetti } from "./celebrate";
-import { mountMascot, type MascotState } from "./components/mascot";
-import type { EngineStatusView } from "./types";
+import { mountPill, type PillFlowState } from "./brand/components";
+import { watchSpeechEngine } from "./engine";
+import { micLevel } from "./level";
+import { getStatus } from "./status";
+import { pillHotkey } from "./platform";
 
 type AppState = "idle" | "recording" | "processing";
 type Flash = "done" | "error" | "celebrate";
@@ -19,23 +24,24 @@ type View = AppState | Flash;
 const DONE_MS = 1600;
 const ERROR_MS = 2400;
 const CELEBRATE_MS = 5000;
-const CONFETTI_COLORS = ["#C0683F", "#F3D36B", "#3F6B4B", "#B7CDA3"];
+const DEFAULT_HOTKEY = "CmdOrCtrl+Shift+Space";
+const ERROR_TEXT = "Didn't catch that";
+const WARMING_TEXT = "Warming up…";
 
-const VIEWS: Record<View, { mascot: MascotState; label: string }> = {
-  idle: { mascot: "idle", label: "" },
-  recording: { mascot: "listening", label: "Listening" },
-  processing: { mascot: "thinking", label: "Tidying up" },
-  done: { mascot: "done", label: "Sent" },
-  error: { mascot: "idle", label: "Didn't catch that" },
-  celebrate: { mascot: "done", label: "" },
+const PILL_STATE: Record<Exclude<View, "error">, PillFlowState> = {
+  idle: "idle",
+  recording: "listening",
+  processing: "polishing",
+  done: "sent",
+  celebrate: "sent",
 };
 
-const pill = document.getElementById("pill")!;
-const labelEl = document.getElementById("label")!;
+const control = document.getElementById("pill")!;
 const fillEl = document.getElementById("countdown-fill")!;
-const slot = document.getElementById("mascot-slot")!;
-const confettiLayer = document.getElementById("confetti-layer")!;
-const mascot = mountMascot(slot, { size: 44, surface: "cream" });
+const pill = mountPill(document.getElementById("capsule")!, {
+  hotkey: pillHotkey(DEFAULT_HOTKEY),
+  idleLabel: "Press",
+});
 
 // What Rust last said, and a short-lived flash (done / error / caption) that
 // shows while Rust is idle. Recording and processing always win over a flash.
@@ -43,8 +49,8 @@ let appState: AppState = "idle";
 let flash: Flash | null = null;
 let caption = "";
 let flashTimer: ReturnType<typeof setTimeout> | undefined;
-// The speech model is still loading: a dictation waiting on it says so
-// instead of looking stuck on "Tidying up".
+// A first dictation can wait on the speech model loading; say so, so the
+// pill doesn't look stuck.
 let warming = false;
 
 function currentView(): View {
@@ -55,13 +61,10 @@ function render() {
   const view = currentView();
   document.body.dataset.view = view;
   document.body.dataset.app = appState;
-  mascot.set(VIEWS[view].mascot);
-  labelEl.textContent =
-    view === "celebrate"
-      ? caption
-      : view === "processing" && warming
-        ? "Warming up…"
-        : VIEWS[view].label;
+  if (view === "error") pill.error(ERROR_TEXT);
+  else if (view === "celebrate") pill.set("sent", caption);
+  else if (view === "processing" && warming) pill.set("polishing", WARMING_TEXT);
+  else pill.set(PILL_STATE[view]);
   requestAnimationFrame(reportHitRect);
 }
 
@@ -81,39 +84,27 @@ function showFlash(kind: Flash, ms: number) {
 // swallows a click meant for the app underneath. While processing the pill
 // isn't interactive, so it reports nothing.
 function reportHitRect() {
-  const r = appState === "processing" ? null : pill.getBoundingClientRect();
+  const r = appState === "processing" ? null : control.getBoundingClientRect();
   void invoke("set_overlay_hit_rect", {
     rect: r ? [r.left, r.top, r.width, r.height] : null,
   });
 }
 window.addEventListener("resize", reportHitRect);
+// The pill also changes size on its own: the capsule morphs between states,
+// and the UI font finishing loading changes label widths after the first
+// report. Re-report on every change.
+new ResizeObserver(() => reportHitRect()).observe(control);
 
-// ---------- mic level ring ----------
+// ---------- mic level and hotkey ----------
 
-// Raw RMS is ~0.005 (whisper-quiet) to ~0.3 (loud). Normalize, then smooth
-// with fast attack / slow decay so speech feels snappy. The loop only runs
-// while recording.
-let target = 0;
-let level = 0;
-let levelFrame = 0;
+void listen<number>("audio-level", (e) => pill.level(micLevel(e.payload)));
 
-void listen<number>("audio-level", (e) => {
-  target = Math.min(1, e.payload * 6);
-});
-
-function levelTick() {
-  level += (target - level) * (target > level ? 0.5 : 0.12);
-  slot.style.setProperty("--level", level.toFixed(3));
-  levelFrame = requestAnimationFrame(levelTick);
+function setHotkey(hk: string) {
+  pill.setHotkey(pillHotkey(hk || DEFAULT_HOTKEY));
 }
-
-function setRecording(on: boolean) {
-  cancelAnimationFrame(levelFrame);
-  target = 0;
-  level = 0;
-  slot.style.setProperty("--level", "0");
-  if (on) levelFrame = requestAnimationFrame(levelTick);
-}
+void getStatus().then((s) => setHotkey(s.hotkey), () => {});
+// The main window broadcasts a newly recorded hotkey (main.ts).
+void listen<string>("hotkey-changed", (e) => setHotkey(e.payload));
 
 // ---------- app state ----------
 
@@ -126,42 +117,24 @@ void listen<string>("state", (e) => {
         clearTimeout(flashTimer);
         flash = null;
       }
-      setRecording(e.payload === "recording");
       appState = e.payload;
       render();
       break;
     case "done":
       appState = "idle";
-      setRecording(false);
       showFlash("done", DONE_MS);
       break;
     case "error":
       appState = "idle";
-      setRecording(false);
       showFlash("error", ERROR_MS);
       break;
   }
 });
 
-function showWarming(status: EngineStatusView) {
-  warming = status.stt.state === "loading";
-  render();
-}
-void invoke<EngineStatusView>("engine_status").then(showWarming);
-void listen<EngineStatusView>("engine-status", (e) => showWarming(e.payload));
+// Every successful dictation gets "Sent clean".
+void listen("result", () => showFlash("done", DONE_MS));
 
-// Every successful dictation gets "Sent" and a small confetti burst.
-void listen("result", () => {
-  showFlash("done", DONE_MS);
-  burstConfetti(confettiLayer, {
-    colors: CONFETTI_COLORS,
-    pieceCount: 14,
-    spread: 100,
-    fallDistance: 70,
-  });
-});
-
-pill.addEventListener("click", (e) => {
+control.addEventListener("click", (e) => {
   if (appState !== "idle" || (e.target as HTMLElement).closest("button")) return;
   void invoke("toggle_recording");
 });
@@ -177,12 +150,6 @@ document.getElementById("confirm")!.addEventListener("click", () => {
 function celebrate(text: string) {
   caption = text;
   showFlash("celebrate", CELEBRATE_MS);
-  burstConfetti(confettiLayer, {
-    colors: CONFETTI_COLORS,
-    pieceCount: 18,
-    spread: 120,
-    fallDistance: 70,
-  });
 
   // Restart the countdown bar: drop the transition, snap full, force a
   // reflow, then animate 100% → 0% even if a previous caption is winding down.
@@ -201,6 +168,11 @@ void listen<string>("correction-learned", (e) => celebrate(`Got it, "${e.payload
 // Cmd-V, so nothing at the OS level marks this as new.
 void listen<boolean>("watching-edits", (e) => {
   document.body.classList.toggle("watching", e.payload);
+});
+
+watchSpeechEngine((stt) => {
+  warming = stt.state === "loading";
+  render();
 });
 
 render();

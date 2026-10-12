@@ -1,7 +1,7 @@
 mod audio;
+#[cfg(target_os = "macos")]
 mod ax_read;
 mod cleanup;
-mod cloud_llm;
 mod corrections;
 pub mod dictionary;
 pub mod engine;
@@ -9,17 +9,19 @@ pub mod fastclean;
 mod history;
 mod inject;
 mod learned;
-mod ollama_pull;
-mod secrets;
+mod platform;
+mod secure_random;
 mod settings;
 mod snippets;
 mod stats;
 mod structure;
 mod transforms;
+mod untrusted;
 mod voice_commands;
 
 use serde::Serialize;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::TrayIconBuilder;
@@ -28,8 +30,9 @@ use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 use tauri_plugin_notification::NotificationExt;
 
 use audio::Recorder;
+use engine::llm::{LlamaServerEngine, LlmEngine};
 use engine::stt::{ParakeetEngine, SttEngine};
-use settings::{AiEngine, CleanupMode, InjectMode, Settings};
+use settings::{CleanupMode, InjectMode, Settings};
 
 /// Dictation is push-to-talk: hold the hotkey to record, release to
 /// transcribe. Releases faster than this are accidental taps — the recording
@@ -43,8 +46,8 @@ struct AppState {
     settings: Mutex<Settings>,
     /// Cached copy of transforms.json; hotkey routing reads it on every press.
     transforms: Mutex<Vec<transforms::Transform>>,
-    /// Guards against overlapping pipeline runs.
-    processing: Mutex<bool>,
+    /// Guards against overlapping pipeline runs; see `try_begin_session`.
+    processing: Arc<AtomicBool>,
     last_result: Mutex<Option<TranscriptPayload>>,
     hotkey_press: Mutex<HotkeyPress>,
     /// Set when recording starts; drained by stop to compute record_ms.
@@ -64,6 +67,9 @@ struct AppState {
     /// In-process speech engine. Set once in `setup`, where the app-data
     /// dir that holds its model is first known.
     stt: OnceLock<Arc<ParakeetEngine>>,
+    /// Smart cleanup and transforms (llama-server sidecar). Set once in
+    /// `setup`, like `stt`.
+    llm: OnceLock<Arc<LlamaServerEngine>>,
 }
 
 #[derive(Default)]
@@ -87,16 +93,49 @@ struct TranscriptPayload {
 #[derive(Debug, Clone, Serialize)]
 struct StatusPayload {
     stt: engine::EngineState,
-    ollama_up: bool,
-    ollama_model_found: bool,
-    ollama_model: String,
-    /// Lets the UI soften the Ollama rows: with a cloud engine selected a
-    /// stopped Ollama removes the fallback rung rather than breaking
-    /// cleanup outright.
-    ai_engine: String,
-    accessibility_trusted: bool,
+    /// Whether a synthesized paste can reach other apps. `denied` means
+    /// macOS Accessibility is missing and output goes to the clipboard.
+    paste_trust: platform::Trust,
+    /// False where correction learning isn't built (Windows in v1); the UI
+    /// hides its toggle.
+    learning_supported: bool,
     hotkey: String,
     state: String,
+}
+
+/// `StatusPayload` as a pure function of its inputs, so the platform fields
+/// can be tested without an `AppHandle`.
+fn status_payload_for(
+    stt: engine::EngineState,
+    trust: platform::Trust,
+    hotkey: &str,
+    state: &str,
+) -> StatusPayload {
+    StatusPayload {
+        stt,
+        paste_trust: trust,
+        learning_supported: platform::LEARNING_SUPPORTED,
+        hotkey: hotkey.into(),
+        state: state.into(),
+    }
+}
+
+/// Holds the one-session-at-a-time flag; dropping it frees the flag, so a
+/// panicking pipeline thread can't leave Purl stuck "processing".
+struct SessionGuard(Arc<AtomicBool>);
+
+impl Drop for SessionGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
+}
+
+/// Claim the one-session-at-a-time guard. None when a dictation or
+/// transform is already processing; the caller must then do nothing.
+fn try_begin_session(busy: &Arc<AtomicBool>) -> Option<SessionGuard> {
+    busy.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .ok()
+        .map(|_| SessionGuard(busy.clone()))
 }
 
 fn app_support_dir(app: &AppHandle) -> PathBuf {
@@ -115,24 +154,6 @@ fn load_dictionary(app: &AppHandle) -> dictionary::Dictionary {
 
 fn learned_path(app: &AppHandle) -> std::path::PathBuf {
     app_support_dir(app).join("learned.jsonl")
-}
-
-/// The privacy contract as one function, so both cleanup call sites in
-/// `run_pipeline` go through the same decision instead of each picking a
-/// dictionary by hand. `engine` names which backend this particular call is
-/// actually about to hit — the local-Ollama fallback that runs after a
-/// cloud failure passes `AiEngine::Local` here even though
-/// `settings.ai_engine` still says otherwise, because it is Ollama, not the
-/// cloud provider, that is about to receive the terms.
-fn llm_terms_for(
-    engine: AiEngine,
-    base: &dictionary::Dictionary,
-    local: &dictionary::Dictionary,
-) -> String {
-    match engine {
-        AiEngine::Local => local.llm_terms(),
-        _ => base.llm_terms(),
-    }
 }
 
 /// Append a timestamped line to the diagnostic log in the app data dir.
@@ -240,7 +261,7 @@ fn position_overlay(overlay: &tauri::WebviewWindow) {
         let (ow, oh) = overlay
             .outer_size()
             .map(|s| (s.width as f64 / wscale, s.height as f64 / wscale))
-            .unwrap_or((200.0, 82.0));
+            .unwrap_or((420.0, 100.0));
         let margin = 8.0;
         let x = wx + ((ww - ow).max(0.0) / 2.0);
         let y = wy + (wh - oh - margin).max(0.0);
@@ -283,9 +304,9 @@ const OVERLAY_HIT_MARGIN: f64 = 6.0;
 
 /// Keep the pill click-through except while the cursor is actually over it.
 ///
-/// The overlay window (200x82 pt) is much bigger than the control it draws —
-/// a 36 pt mic when idle — because it also has room for the recording pill and
-/// the celebration toast. A normal window swallows mouse events across its
+/// The overlay window (420x100 pt) is much bigger than the control it draws —
+/// a ~170 pt "Press ⌘⇧Space" pill when idle — because it also has room for the
+/// recording pill with its ✕ and ✓ buttons and for captions. A normal window swallows mouse events across its
 /// whole rect, not just where pixels are drawn, so the empty space around the
 /// mic became an invisible dead zone: the pill is always-on-top and parked
 /// bottom-center, exactly where apps like Google Meet put their control bar,
@@ -358,7 +379,7 @@ const WATCH_SETTLED_POLLS: usize = 20; // 12 seconds
 /// indicator, the store, the log, and whether this watcher is still the
 /// current one. Split out so `run_correction_watch` — where the exit paths
 /// and the supersession rule live — can be tested without an `AppHandle`
-/// and without waiting 30 real seconds.
+/// and without waiting 90 real seconds.
 trait WatchHost {
     fn wait(&self, d: std::time::Duration);
     /// Light or clear the disclosure dot.
@@ -437,7 +458,7 @@ impl WatchHost for AppWatchHost {
 /// cleared on the way out unless a newer watcher has taken over, in which case
 /// that watcher owns the dot now.
 fn run_correction_watch(
-    reader: &dyn ax_read::FocusReader,
+    reader: &dyn platform::FocusReader,
     pasted: &str,
     host: &dyn WatchHost,
 ) -> &'static str {
@@ -456,7 +477,7 @@ fn run_correction_watch(
 }
 
 fn watch_span(
-    reader: &dyn ax_read::FocusReader,
+    reader: &dyn platform::FocusReader,
     pasted: &str,
     host: &dyn WatchHost,
 ) -> &'static str {
@@ -542,7 +563,7 @@ fn spawn_correction_watch(app: AppHandle, pasted: String) {
 
     std::thread::spawn(move || {
         let host = AppWatchHost { app, gen };
-        let reader = ax_read::reader();
+        let reader = platform::focus_reader();
         let outcome = run_correction_watch(reader.as_ref(), &pasted, &host);
         host.log(&format!("learning: watch ended ({outcome})"));
     });
@@ -619,7 +640,7 @@ fn start_dictation(app: &AppHandle) {
     let state = app.state::<AppState>();
 
     // Ignore starts while a previous run is still transcribing.
-    if *state.processing.lock().unwrap() {
+    if state.processing.load(Ordering::SeqCst) {
         notify(app, "Still processing the previous dictation — one moment.");
         return;
     }
@@ -636,36 +657,15 @@ fn start_dictation(app: &AppHandle) {
             *state.recording_started.lock().unwrap() = Some(std::time::Instant::now());
             set_state(app, "recording");
             spawn_level_emitter(app.clone(), level);
-            // Warm Ollama (model load + prompt-prefix KV cache) while the
-            // user is speaking, so cleanup starts hot when they stop.
+            // Reloads the speech model if it was dropped for idleness, and
+            // starts the Smart server if it will be needed; both load while
+            // they talk.
             let warm_app = app.clone();
+            let smart = state.settings.lock().unwrap().cleanup_mode == CleanupMode::Smart;
             std::thread::spawn(move || {
-                // Reloads the speech model if it was dropped for idleness;
-                // it loads while they talk.
-                stt(&warm_app).warm();
-                let settings = warm_app
-                    .state::<AppState>()
-                    .settings
-                    .lock()
-                    .unwrap()
-                    .clone();
-                if settings.cleanup_mode == CleanupMode::Ai {
-                    let dictionary = load_dictionary(&warm_app);
-                    // Must match what `run_pipeline` sends to `cleanup::clean` for
-                    // the Local engine, or the KV-cache prefix misses and this
-                    // warm-up buys nothing (see the invariant note in cleanup.rs).
-                    let rules = if settings.learn_corrections {
-                        learned::load(&learned_path(&warm_app))
-                    } else {
-                        Vec::new()
-                    };
-                    let local_dictionary =
-                        dictionary.with_extra_terms(&learned::glossary_terms(&rules));
-                    cleanup::prewarm(
-                        &local_dictionary.llm_terms(),
-                        &settings.ollama_model,
-                        settings.structure_mode,
-                    );
+                warm_speech(&warm_app.state::<AppState>());
+                if smart {
+                    llm(&warm_app).warm();
                 }
             });
         }
@@ -683,7 +683,18 @@ fn stop_and_transcribe(app: &AppHandle) {
         Some(r) => r,
         None => return,
     };
-    *state.processing.lock().unwrap() = true;
+    let Some(session) = try_begin_session(&state.processing) else {
+        // A transform got in first. Starting a second pipeline would race
+        // it for the clipboard; drop this recording instead.
+        recorder.cancel();
+        log_line(app, "dictation discarded — another session is processing");
+        set_state(app, "processing");
+        notify(
+            app,
+            "Purl was busy with a transform, so that dictation was discarded. Try again in a moment.",
+        );
+        return;
+    };
     // Hides the overlay too — if the user clicked the pill's ✓, focus must
     // return to their target app before the paste keystroke fires.
     set_state(app, "processing");
@@ -699,8 +710,7 @@ fn stop_and_transcribe(app: &AppHandle) {
     let app = app.clone();
     std::thread::spawn(move || {
         let result = run_pipeline(&app, recorder, record_ms);
-        let state = app.state::<AppState>();
-        *state.processing.lock().unwrap() = false;
+        drop(session);
         set_state(&app, pipeline_end_state(&result));
         if let Err(e) = result {
             log_line(&app, &format!("pipeline ERROR: {e}"));
@@ -748,31 +758,32 @@ fn toggle_dictation(app: &AppHandle) {
 /// `processing` guard with dictation so the two can never overlap.
 fn run_transform(app: &AppHandle, t: transforms::Transform) {
     let state = app.state::<AppState>();
-    {
-        let mut processing = state.processing.lock().unwrap();
-        if *processing || state.recorder.lock().unwrap().is_some() {
-            notify(
-                app,
-                "Busy with another dictation or transform — one moment.",
-            );
-            return;
-        }
-        *processing = true;
-    }
-    if !inject::accessibility_trusted() {
-        *state.processing.lock().unwrap() = false;
+    let session = if state.recorder.lock().unwrap().is_some() {
+        None
+    } else {
+        try_begin_session(&state.processing)
+    };
+    let Some(session) = session else {
+        notify(
+            app,
+            "Busy with another dictation or transform — one moment.",
+        );
+        return;
+    };
+    if !platform::injector().can_inject().can_paste() {
+        drop(session);
         notify(
             app,
             "Transforms need the Accessibility permission to read your selection (see the app window).",
         );
-        inject::prompt_accessibility();
+        platform::injector().request_trust();
         return;
     }
     set_state(app, "processing");
     let app = app.clone();
     std::thread::spawn(move || {
         let result = run_transform_pipeline(&app, &t);
-        *app.state::<AppState>().processing.lock().unwrap() = false;
+        drop(session);
         set_state(&app, "idle");
         match result {
             Ok(()) => {
@@ -789,21 +800,6 @@ fn run_transform(app: &AppHandle, t: transforms::Transform) {
 /// Copy selection → LLM rewrite → paste back, restoring the user's original
 /// clipboard on every path. Runs off the main thread.
 fn run_transform_pipeline(app: &AppHandle, t: &transforms::Transform) -> Result<(), String> {
-    let (engine, local_model) = {
-        let state = app.state::<AppState>();
-        let s = state.settings.lock().unwrap();
-        (s.ai_engine, s.ollama_model.clone())
-    };
-    let cloud = cloud_llm::CloudProvider::from_engine(engine).map(|provider| {
-        let model = app
-            .state::<AppState>()
-            .settings
-            .lock()
-            .unwrap()
-            .cloud_model(engine)
-            .to_string();
-        (provider, model)
-    });
     let t0 = std::time::Instant::now();
 
     let (selection, previous) =
@@ -812,15 +808,7 @@ fn run_transform_pipeline(app: &AppHandle, t: &transforms::Transform) -> Result<
         return Err("Select some text first, then press the transform hotkey.".into());
     };
 
-    // No local fallback: a transform is synchronous and the user is
-    // waiting, so a silent ~4s retry on the local model reads as a hang.
-    let attempt = match &cloud {
-        Some((provider, model)) => {
-            let key = secrets::get(provider.keychain_account()).unwrap_or_default();
-            cloud_llm::run_transform(&text, &t.prompt, *provider, model, &key)
-        }
-        None => transforms::run(&text, &t.prompt, &local_model),
-    };
+    let attempt = transforms::run(&*llm(app), &text, &t.prompt);
     let out = match attempt {
         Ok(o) => o,
         Err(e) => {
@@ -830,10 +818,20 @@ fn run_transform_pipeline(app: &AppHandle, t: &transforms::Transform) -> Result<
     };
 
     // The selection is still highlighted in the target app, so the paste
-    // replaces it in place.
-    let paste = inject::inject(&out);
+    // replaces it in place. If the paste fails, `inject` leaves the result on
+    // the clipboard; keep it there rather than restoring the old clipboard.
+    if let Err(e) = inject::inject(&out) {
+        log_line(
+            app,
+            &format!("transform paste FAILED: {e} -> clipboard fallback"),
+        );
+        return Err(format!(
+            "Couldn't paste the {} result, so it's on your clipboard — paste with {}.",
+            t.name,
+            platform::PASTE_SHORTCUT
+        ));
+    }
     inject::restore_clipboard(&previous);
-    paste.map_err(|e| format!("Paste failed: {e}"))?;
 
     log_line(
         app,
@@ -848,21 +846,55 @@ fn run_transform_pipeline(app: &AppHandle, t: &transforms::Transform) -> Result<
     Ok(())
 }
 
+/// How a dictation reached the user in paste mode.
+#[derive(Debug, PartialEq)]
+enum Delivery {
+    /// Every text segment pasted and every command key sent.
+    Sent,
+    /// A paste or key failed (typically Windows UIPI: the target runs as
+    /// administrator), so the whole dictation went to the clipboard instead.
+    /// Holds the failure, for the log.
+    Copied(String),
+}
+
+/// Paste text segments and send command keys ("go down" → ↓) in order, with
+/// a short pause between them so the target app keeps up. On the first
+/// failure, stop and put the whole dictation (`full`) on the clipboard: the
+/// user gets all of it to paste by hand rather than half of it.
+fn deliver_segments(
+    segments: &[voice_commands::Segment],
+    full: &str,
+    paste: &mut dyn FnMut(&str) -> Result<(), inject::InjectError>,
+    key: &mut dyn FnMut(voice_commands::Key) -> Result<(), inject::InjectError>,
+    copy: &mut dyn FnMut(&str) -> Result<(), inject::InjectError>,
+) -> Result<Delivery, String> {
+    for (i, seg) in segments.iter().enumerate() {
+        if i > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(120));
+        }
+        let sent = match seg {
+            voice_commands::Segment::Text(t) => paste(t),
+            voice_commands::Segment::Key(k) => key(*k),
+        };
+        if let Err(e) = sent {
+            copy(full).map_err(|e| format!("Clipboard failed: {e}"))?;
+            return Ok(Delivery::Copied(e.to_string()));
+        }
+    }
+    Ok(Delivery::Sent)
+}
+
 /// stop recording → transcribe → clean → inject. Runs off the main thread.
 fn run_pipeline(app: &AppHandle, recorder: Recorder, record_ms: u64) -> Result<(), String> {
     let settings = app.state::<AppState>().settings.lock().unwrap().clone();
     let dictionary = load_dictionary(app);
     let support = app_support_dir(app);
 
-    // Learned words bias the local model. `dictionary` stays
-    // untouched: it is what the cloud arm sends, and a user's corrected
-    // names must not leave the machine because they fixed a typo.
     let rules = if settings.learn_corrections {
         learned::load(&learned_path(app))
     } else {
         Vec::new()
     };
-    let local_dictionary = dictionary.with_extra_terms(&learned::glossary_terms(&rules));
 
     let pcm = recorder
         .stop_samples()
@@ -872,7 +904,13 @@ fn run_pipeline(app: &AppHandle, recorder: Recorder, record_ms: u64) -> Result<(
     }
 
     let t0 = std::time::Instant::now();
-    let raw = stt(app).transcribe(&pcm).map_err(|e| e.to_string())?;
+    let stt = app
+        .state::<AppState>()
+        .stt
+        .get()
+        .cloned()
+        .ok_or("The speech engine is still starting. Try again in a moment.")?;
+    let raw = stt.transcribe(&pcm).map_err(|e| e.to_string())?;
     let transcribe_ms = t0.elapsed().as_millis();
 
     if raw.trim().is_empty() {
@@ -881,76 +919,31 @@ fn run_pipeline(app: &AppHandle, recorder: Recorder, record_ms: u64) -> Result<(
 
     let t1 = std::time::Instant::now();
     let cleaned = match settings.cleanup_mode {
-        CleanupMode::Ai => match settings.ai_engine {
-            AiEngine::Local => cleanup::clean(
-                &raw,
-                &llm_terms_for(AiEngine::Local, &dictionary, &local_dictionary),
-                &settings.ollama_model,
-                settings.structure_mode,
-            ),
-            engine => {
-                // Unwrap is sound: the Local arm above is the only None case.
-                let provider = cloud_llm::CloudProvider::from_engine(engine)
-                    .expect("non-Local engine always maps to a provider");
-                let key = secrets::get(provider.keychain_account()).unwrap_or_default();
-                let cloud = cloud_llm::clean(
-                    &raw,
-                    &llm_terms_for(engine, &dictionary, &local_dictionary),
-                    provider,
-                    settings.cloud_model(engine),
-                    &key,
-                    settings.structure_mode,
-                );
-                if cloud.used_llm {
-                    cloud
-                } else {
-                    // Rung 2 of the ladder. The note must say cloud failed
-                    // AND local ran: silent degradation is exactly what
-                    // makes a bad key impossible for a user to diagnose.
-                    // `error_head` strips the provider's response body: the status
-                    // is what the user can act on, and the body is up to 200 bytes
-                    // of JSON that would land in a one-line paragraph in the UI.
-                    let why = cloud
-                        .note
-                        .as_deref()
-                        .map(|n| cloud_llm::error_head(n).to_string())
-                        .unwrap_or_else(|| "unknown error".into());
-                    log_line(
-                        app,
-                        &format!("cloud cleanup failed ({why}) -> local Ollama"),
-                    );
-                    let mut local = cleanup::clean(
-                        &raw,
-                        &llm_terms_for(AiEngine::Local, &dictionary, &local_dictionary),
-                        &settings.ollama_model,
-                        settings.structure_mode,
-                    );
-                    // Rung 3: if local did not run either, do not claim it did.
-                    local.note = Some(if local.used_llm {
-                        format!(
-                            "{} failed ({why}); cleaned locally instead",
-                            provider.label()
-                        )
-                    } else {
-                        format!(
-                            "{} and local cleanup both failed ({why}); pasted your words unchanged",
-                            provider.label()
-                        )
-                    });
-                    local
-                }
-            }
+        CleanupMode::Off => cleanup::CleanResult {
+            text: raw.clone(),
+            used_llm: false,
+            note: None,
         },
-        CleanupMode::Fast => cleanup::CleanResult {
+        CleanupMode::Fast | CleanupMode::LegacyAi => cleanup::CleanResult {
             text: fastclean::clean(&raw, &dictionary),
             used_llm: false,
             note: None,
         },
-        CleanupMode::Off => cleanup::CleanResult {
-            text: raw.clone(),
-            used_llm: false,
-            note: Some("cleanup disabled in settings".into()),
-        },
+        CleanupMode::Smart => {
+            // Learned corrections bias the model too; the prompt treats
+            // them as data (they were read out of other apps' fields).
+            let terms = dictionary
+                .with_extra_terms(&learned::glossary_terms(&rules))
+                .llm_terms();
+            cleanup::smart_clean(
+                &*llm(app),
+                &raw,
+                &terms,
+                settings.structure_mode,
+                smart_budget(&settings.smart_model),
+                || fastclean::clean(&raw, &dictionary),
+            )
+        }
     };
     let cleanup_ms = t1.elapsed().as_millis();
 
@@ -982,6 +975,8 @@ fn run_pipeline(app: &AppHandle, recorder: Recorder, record_ms: u64) -> Result<(
     *app.state::<AppState>().last_result.lock().unwrap() = Some(payload.clone());
     let _ = app.emit("result", &payload);
 
+    let paste_trust = platform::injector().can_inject();
+
     // Pasting while our own window is frontmost would dump the text into
     // Purl itself (e.g. dictation stopped via the in-app button).
     let own_window_focused = app
@@ -993,14 +988,15 @@ fn run_pipeline(app: &AppHandle, recorder: Recorder, record_ms: u64) -> Result<(
         app,
         &format!(
             "pipeline done: transcribe={transcribe_ms}ms cleanup={cleanup_ms}ms used_llm={} \
-             inject_mode={:?} own_window_focused={own_window_focused} accessibility_trusted={}",
-            cleaned.used_llm,
-            settings.inject_mode,
-            inject::accessibility_trusted()
+             inject_mode={:?} own_window_focused={own_window_focused} paste_trust={:?}",
+            cleaned.used_llm, settings.inject_mode, paste_trust
         ),
     );
 
     let has_key_commands = voice_commands::has_keys(&segments);
+    // Set when a synthesized paste or key fails mid-way and the text went to
+    // the clipboard instead.
+    let mut paste_failed = false;
     match settings.inject_mode {
         InjectMode::Paste => {
             if own_window_focused {
@@ -1011,32 +1007,35 @@ fn run_pipeline(app: &AppHandle, recorder: Recorder, record_ms: u64) -> Result<(
                     app,
                     "Copied to clipboard (Purl was focused). Use the hotkey from your target app to paste automatically.",
                 );
-            } else if inject::accessibility_trusted() {
-                // Walk the segments in order: paste text, synthesize command
-                // keystrokes ("go down" → ↓). A short pause after each key
-                // lets the target app process it before the next paste.
-                for (i, seg) in segments.iter().enumerate() {
-                    if i > 0 {
-                        std::thread::sleep(std::time::Duration::from_millis(120));
-                    }
-                    match seg {
-                        voice_commands::Segment::Text(t) => {
-                            log_line(app, "inject: pasting via Cmd-V");
-                            inject::inject(t).map_err(|e| {
-                                log_line(app, &format!("inject: paste FAILED: {e}"));
-                                format!("Paste failed: {e}")
-                            })?;
-                        }
-                        voice_commands::Segment::Key(k) => {
-                            log_line(app, &format!("inject: voice command key {k:?}"));
-                            inject::send_key(k.keycode()).map_err(|e| {
-                                log_line(app, &format!("inject: key FAILED: {e}"));
-                                format!("Keystroke failed: {e}")
-                            })?;
-                        }
+            } else if paste_trust.can_paste() {
+                let mut paste = |t: &str| {
+                    log_line(app, "inject: pasting via Cmd-V");
+                    inject::inject(t)
+                };
+                let mut key = |k: voice_commands::Key| {
+                    log_line(app, &format!("inject: voice command key {k:?}"));
+                    platform::injector().send_key(k)
+                };
+                match deliver_segments(
+                    &segments,
+                    &expanded,
+                    &mut paste,
+                    &mut key,
+                    &mut inject::copy_to_clipboard,
+                )? {
+                    Delivery::Sent => log_line(app, "inject: all segments sent OK"),
+                    Delivery::Copied(e) => {
+                        log_line(app, &format!("inject: FAILED: {e} -> clipboard fallback"));
+                        notify(
+                            app,
+                            &format!(
+                                "Copied to clipboard — paste with {}.",
+                                platform::PASTE_SHORTCUT
+                            ),
+                        );
+                        paste_failed = true;
                     }
                 }
-                log_line(app, "inject: all segments sent OK");
             } else {
                 log_line(
                     app,
@@ -1087,7 +1086,7 @@ fn run_pipeline(app: &AppHandle, recorder: Recorder, record_ms: u64) -> Result<(
     if let Err(e) = learned::record_hits(&learned_path(app), &fired_rules, ts) {
         log_line(app, &format!("learned hits update failed: {e}"));
     }
-    // `accessibility_trusted` is part of the gate, not an implementation
+    // `paste_trust` is part of the gate, not an implementation
     // detail: without it the paste fell back to the clipboard, so there is
     // nothing in any field to watch. Spawning anyway would light the
     // disclosure dot, read nothing, and clear it — training the user to
@@ -1103,7 +1102,8 @@ fn run_pipeline(app: &AppHandle, recorder: Recorder, record_ms: u64) -> Result<(
     if settings.learn_corrections
         && matches!(settings.inject_mode, InjectMode::Paste)
         && !own_window_focused
-        && inject::accessibility_trusted()
+        && paste_trust.can_paste()
+        && !paste_failed
     {
         spawn_correction_watch(app.clone(), expanded.clone());
     }
@@ -1124,26 +1124,27 @@ fn get_settings(state: tauri::State<AppState>) -> Settings {
 
 #[tauri::command]
 fn save_settings(app: AppHandle, new_settings: Settings) -> Result<(), String> {
-    // `load` sanitizes these, but nothing stopped a bad value from being
-    // persisted and used for the rest of the session.
-    if !settings::is_allowed_model(&new_settings.ollama_model) {
-        return Err(format!(
-            "Unknown local model: {}",
-            new_settings.ollama_model
-        ));
-    }
-    if !settings::is_allowed_cloud_model(&new_settings.claude_model)
-        || !settings::is_allowed_cloud_model(&new_settings.gemini_model)
-    {
-        return Err("Invalid cloud model id.".into());
-    }
+    // Same coercion as `load`, so a stale UI can't persist a value this
+    // version no longer runs.
+    let new_settings = new_settings.sanitized();
     let path = app_support_dir(&app).join("settings.json");
     new_settings.save(&path).map_err(|e| e.to_string())?;
 
     let state = app.state::<AppState>();
     let old_hotkey = state.settings.lock().unwrap().hotkey.clone();
     let new_hotkey = new_settings.hotkey.clone();
+    let smart_model = new_settings.smart_model.clone();
+    let smart_on = new_settings.cleanup_mode == CleanupMode::Smart;
     *state.settings.lock().unwrap() = new_settings;
+    // A different Smart model replaces the running server.
+    if let Some(path) = engine::llm::model_path(&app_support_dir(&app), &smart_model) {
+        if let Some(engine) = state.llm.get() {
+            engine.set_model(path);
+        }
+    }
+    if smart_on {
+        warm_smart(&state);
+    }
 
     if old_hotkey != new_hotkey {
         let gs = app.global_shortcut();
@@ -1152,68 +1153,6 @@ fn save_settings(app: AppHandle, new_settings: Settings) -> Result<(), String> {
             .map_err(|e| format!("Couldn't register hotkey {new_hotkey}: {e}"))?;
     }
     Ok(())
-}
-
-/// Resolve an engine name from the frontend to a cloud provider. `local`
-/// is an error rather than a no-op: reaching key management with `local`
-/// means the UI routed wrongly, and silence would hide it.
-///
-/// Matched directly against the bare engine name the key commands send —
-/// there is no `engine:model` token to split here (that token is a
-/// frontend-only concept, see `engine-token.ts`), so a synthesized
-/// `"gemini:extra"` is simply an unrecognized name and errors out.
-fn provider_from_name(engine: &str) -> Result<cloud_llm::CloudProvider, String> {
-    match engine {
-        "claude" => Ok(cloud_llm::CloudProvider::Claude),
-        "gemini" => Ok(cloud_llm::CloudProvider::Gemini),
-        _ => Err(format!("\"{engine}\" is not a cloud engine.")),
-    }
-}
-
-#[tauri::command]
-fn set_cloud_api_key(engine: String, key: String) -> Result<(), String> {
-    let provider = provider_from_name(&engine)?;
-    let key = key.trim();
-    if key.is_empty() {
-        return Err("Paste your API key first.".into());
-    }
-    secrets::set(provider.keychain_account(), key)
-}
-
-/// Presence only. The key itself must never cross the IPC boundary.
-#[tauri::command]
-fn cloud_key_status(engine: String) -> bool {
-    match provider_from_name(&engine) {
-        Ok(provider) => secrets::has(provider.keychain_account()),
-        Err(_) => false,
-    }
-}
-
-#[tauri::command]
-fn clear_cloud_api_key(engine: String) -> Result<(), String> {
-    let provider = provider_from_name(&engine)?;
-    let account = provider.keychain_account();
-    secrets::delete(account)?;
-    // `delete` now surfaces a refused delete directly. This second check adds
-    // only the case where the item's own ACL blocks removal but still permits
-    // a read — it cannot detect a locked Keychain, because `has` would report
-    // absent there too.
-    if secrets::has(account) {
-        return Err(format!(
-            "Could not remove the {} key from your Keychain. Check Keychain Access and try again.",
-            provider.label()
-        ));
-    }
-    Ok(())
-}
-
-/// Verify a stored key and model with one tiny request.
-#[tauri::command]
-fn test_cloud_key(engine: String, model: String) -> Result<(), String> {
-    let provider = provider_from_name(&engine)?;
-    let key = secrets::get(provider.keychain_account())
-        .ok_or_else(|| format!("No {} key saved yet.", provider.label()))?;
-    cloud_llm::test_key(provider, &model, &key)
 }
 
 /// Outcome of a failed shortcut swap: the new combo was rejected, and the
@@ -1418,55 +1357,26 @@ fn apply_transforms(app: &AppHandle, list: Vec<transforms::Transform>) -> Result
 #[tauri::command]
 fn get_status(app: AppHandle, state: tauri::State<AppState>) -> StatusPayload {
     let settings = state.settings.lock().unwrap().clone();
-    let (ollama_up, ollama_model_found) = cleanup::ollama_status(&settings.ollama_model);
     let app_state = if state.recorder.lock().unwrap().is_some() {
         "recording"
-    } else if *state.processing.lock().unwrap() {
+    } else if state.processing.load(Ordering::SeqCst) {
         "processing"
     } else {
         "idle"
     };
-    StatusPayload {
-        stt: stt_status(&app),
-        ollama_up,
-        ollama_model_found,
-        ollama_model: settings.ollama_model,
-        ai_engine: match settings.ai_engine {
-            AiEngine::Local => "local",
-            AiEngine::Claude => "claude",
-            AiEngine::Gemini => "gemini",
-        }
-        .into(),
-        accessibility_trusted: inject::accessibility_trusted(),
-        hotkey: settings.hotkey,
-        state: app_state.into(),
-    }
+    status_payload_for(
+        stt_status(&app),
+        platform::injector().can_inject(),
+        &settings.hotkey,
+        app_state,
+    )
 }
 
-#[derive(serde::Serialize)]
-struct InstalledModels {
-    up: bool,
-    installed: Vec<String>,
-}
-
+/// Microphone permission: `granted`, `denied`, or `not_required` (macOS
+/// hasn't asked yet; it will on the first dictation).
 #[tauri::command]
-fn list_installed_models() -> InstalledModels {
-    let (up, installed) = cleanup::installed_models();
-    InstalledModels { up, installed }
-}
-
-#[tauri::command]
-fn pull_ollama_model(app: AppHandle, model: String) -> Result<(), String> {
-    let model = model.trim().to_string();
-    if model.is_empty() {
-        return Err("Empty model name".into());
-    }
-    std::thread::spawn(move || {
-        ollama_pull::stream_pull(&model, |ev| {
-            let _ = app.emit("ollama-pull", ev);
-        });
-    });
-    Ok(())
+fn mic_status() -> platform::Trust {
+    platform::mic_status()
 }
 
 #[tauri::command]
@@ -1579,6 +1489,21 @@ struct ModelDoneEvent {
     id: &'static str,
     ok: bool,
     error: Option<String>,
+    /// `DownloadError::kind`; None when ok.
+    kind: Option<&'static str>,
+}
+
+fn model_done(
+    id: &'static str,
+    result: &Result<(), engine::download::DownloadError>,
+) -> ModelDoneEvent {
+    let failure = result.as_ref().err();
+    ModelDoneEvent {
+        id,
+        ok: failure.is_none(),
+        error: failure.map(|e| e.to_string()),
+        kind: failure.map(|e| e.kind()),
+    }
 }
 
 #[tauri::command]
@@ -1607,29 +1532,33 @@ fn download_model(app: AppHandle, state: tauri::State<AppState>, id: String) -> 
                 },
             );
         });
-        let error = result.err().map(|e| e.to_string());
+        let done = model_done(spec.id, &result);
         log_line(
             &app,
             &format!(
                 "model {}: download {}",
                 spec.id,
-                error.as_deref().unwrap_or("ok")
+                done.error.as_deref().unwrap_or("ok")
             ),
         );
-        app.state::<AppState>()
-            .downloads
-            .finish(spec.id, error.clone());
-        if error.is_none() && spec.id == engine::stt::MODEL_ID {
-            stt(&app).warm();
+        app.state::<AppState>().downloads.finish(spec.id, &result);
+        if result.is_ok() && spec.id == engine::stt::MODEL_ID {
+            warm_speech(&app.state::<AppState>());
         }
-        let _ = app.emit(
-            "model-done",
-            ModelDoneEvent {
-                id: spec.id,
-                ok: error.is_none(),
-                error,
-            },
-        );
+        if spec.kind == engine::models::Kind::Llm {
+            let _ = app.emit("engine-status", engine_status_view(&app));
+            let smart_on = app
+                .state::<AppState>()
+                .settings
+                .lock()
+                .unwrap()
+                .cleanup_mode
+                == CleanupMode::Smart;
+            if result.is_ok() && smart_on {
+                warm_smart(&app.state::<AppState>());
+            }
+        }
+        let _ = app.emit("model-done", done);
     });
     Ok(())
 }
@@ -1647,8 +1576,12 @@ fn delete_model(app: AppHandle, state: tauri::State<AppState>, id: String) -> Re
     if state.downloads.is_running(spec.id) {
         return Err("Cancel the download first".into());
     }
-    if spec.id == engine::stt::MODEL_ID && !stt(&app).release() {
-        return Err("Stop using this model first".into());
+    if spec.id == engine::stt::MODEL_ID {
+        release_speech_model(&state)?;
+    }
+    let smart_model = state.settings.lock().unwrap().smart_model.clone();
+    if spec.id == smart_model {
+        release_smart_model(&state)?;
     }
     let dir = engine::models::model_dir(&app_support_dir(&app), spec.id);
     match std::fs::remove_dir_all(&dir) {
@@ -1656,6 +1589,9 @@ fn delete_model(app: AppHandle, state: tauri::State<AppState>, id: String) -> Re
         _ => {}
     }
     state.downloads.clear_error(spec.id);
+    if spec.kind == engine::models::Kind::Llm {
+        let _ = app.emit("engine-status", engine_status_view(&app));
+    }
     Ok(())
 }
 
@@ -1667,9 +1603,97 @@ fn engine_status(app: AppHandle) -> engine::EngineStatusView {
 fn engine_status_view(app: &AppHandle) -> engine::EngineStatusView {
     engine::EngineStatusView {
         stt: stt_status(app),
-        // The smart-cleanup engine arrives in Task 6.
-        llm: engine::EngineState::Missing,
+        llm: llm_status(app),
     }
+}
+
+/// Safe before `setup` has built the engine; reports Missing until then.
+fn llm_status(app: &AppHandle) -> engine::EngineState {
+    app.state::<AppState>()
+        .llm
+        .get()
+        .map_or(engine::EngineState::Missing, |e| e.status())
+}
+
+fn llm(app: &AppHandle) -> Arc<LlamaServerEngine> {
+    Arc::clone(
+        app.state::<AppState>()
+            .llm
+            .get()
+            .expect("smart engine is set in setup"),
+    )
+}
+
+/// Start the Smart server in the background. A no-op before `setup` has
+/// built the engine (a webview can save settings that early).
+fn warm_smart(state: &AppState) {
+    if let Some(engine) = state.llm.get() {
+        engine.warm();
+    }
+}
+
+/// Stop the Smart server so its model files can be deleted. Before `setup`
+/// has built the engine nothing is running, so there is nothing to release.
+fn release_smart_model(state: &AppState) -> Result<(), String> {
+    match state.llm.get() {
+        Some(engine) if !engine.release() => Err("Stop using this model first".into()),
+        _ => Ok(()),
+    }
+}
+
+/// The hard deadline for Smart cleanup: the larger model gets longer. On
+/// timeout the Fast result is pasted.
+fn smart_budget(smart_model: &str) -> std::time::Duration {
+    if smart_model == "qwen3.5-4b" {
+        std::time::Duration::from_secs(10)
+    } else {
+        std::time::Duration::from_secs(6)
+    }
+}
+
+/// Build the Smart engine on the bundled llama-server, reap a server a
+/// crashed Purl left behind, broadcast status changes, and stop the server
+/// after 5 idle minutes. With Smart on, the server starts now: the first
+/// start after an install or update takes 15-20 s on macOS (first-run
+/// checks of the new binary), longer than one dictation's budget.
+fn start_llm(app: &AppHandle) {
+    let app_data = app_support_dir(app);
+    let smart_model = app
+        .state::<AppState>()
+        .settings
+        .lock()
+        .unwrap()
+        .smart_model
+        .clone();
+    let model = engine::llm::model_path(&app_data, &smart_model)
+        .or_else(|| engine::llm::model_path(&app_data, settings::DEFAULT_SMART_MODEL))
+        .expect("the default Smart model is in the registry");
+    let bin = engine::sidecar::llama_server_path(&app.path().resource_dir().unwrap_or_default());
+    // Windows ties the server to a Job Object instead of a PID file.
+    let pid_file = cfg!(unix).then(|| app_data.join("llama.pid"));
+    if let Some(pid_file) = &pid_file {
+        engine::sidecar::reap_stale(pid_file);
+    }
+    let engine = LlamaServerEngine::new(bin, model, pid_file);
+    let emit_app = app.clone();
+    engine.set_listener(Box::new(move || {
+        let _ = emit_app.emit("engine-status", engine_status_view(&emit_app));
+    }));
+    let _ = app.state::<AppState>().llm.set(Arc::clone(&engine));
+    let smart_on = app
+        .state::<AppState>()
+        .settings
+        .lock()
+        .unwrap()
+        .cleanup_mode
+        == CleanupMode::Smart;
+    if smart_on {
+        engine.warm();
+    }
+    std::thread::spawn(move || loop {
+        std::thread::sleep(std::time::Duration::from_secs(60));
+        engine.stop_if_idle(std::time::Duration::from_secs(5 * 60));
+    });
 }
 
 /// Safe to call before `setup` has built the engine (a webview can ask
@@ -1681,13 +1705,21 @@ fn stt_status(app: &AppHandle) -> engine::EngineState {
         .map_or(engine::EngineState::Loading, |e| e.status())
 }
 
-fn stt(app: &AppHandle) -> Arc<ParakeetEngine> {
-    Arc::clone(
-        app.state::<AppState>()
-            .stt
-            .get()
-            .expect("speech engine is set in setup"),
-    )
+/// Load the speech model in the background. A no-op before `setup` has
+/// built the engine.
+fn warm_speech(state: &AppState) {
+    if let Some(engine) = state.stt.get() {
+        engine.warm();
+    }
+}
+
+/// Let go of the speech model so its files can be deleted. Before `setup`
+/// has built the engine nothing is loaded, so there is nothing to release.
+fn release_speech_model(state: &AppState) -> Result<(), String> {
+    match state.stt.get() {
+        Some(engine) if !engine.release() => Err("Stop using this model first".into()),
+        _ => Ok(()),
+    }
 }
 
 /// Build the speech engine, broadcast its status changes, start loading
@@ -1723,16 +1755,11 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_settings,
             save_settings,
-            set_cloud_api_key,
-            cloud_key_status,
-            clear_cloud_api_key,
-            test_cloud_key,
             set_hotkey,
             suspend_hotkey,
             resume_hotkey,
             get_status,
-            list_installed_models,
-            pull_ollama_model,
+            mic_status,
             get_last_result,
             toggle_recording,
             cancel_dictation,
@@ -1771,12 +1798,12 @@ pub fn run() {
             // Paste mode needs Accessibility, and macOS ties the grant to the
             // exact binary — a rebuild silently revokes it. Prompt up front so
             // dictation doesn't quietly degrade to clipboard-only.
-            if wants_paste && !inject::accessibility_trusted() {
+            if wants_paste && !platform::injector().can_inject().can_paste() {
                 log_line(
                     app.handle(),
                     "startup: paste mode but NOT accessibility trusted -> showing grant prompt",
                 );
-                inject::prompt_accessibility();
+                platform::injector().request_trust();
             }
 
             // Tray with quick actions; the window is a settings/status panel.
@@ -1835,6 +1862,7 @@ pub fn run() {
             // Load the speech model now so the first dictation doesn't pay
             // the model-load cost.
             start_stt(app.handle());
+            start_llm(app.handle());
 
             // The voice pill is a persistent fixture from launch, parked on
             // whichever display currently has the cursor, and follows it
@@ -1862,8 +1890,31 @@ pub fn run() {
                 api.prevent_close();
             }
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            // Quit stops the Smart server so it can't outlive the app.
+            if let tauri::RunEvent::Exit = event {
+                if let Some(llm) = app.state::<AppState>().llm.get() {
+                    llm.shutdown();
+                }
+            }
+        });
+}
+
+#[cfg(test)]
+mod speech_engine_access_tests {
+    use super::{release_smart_model, release_speech_model, warm_smart, warm_speech, AppState};
+
+    /// A webview can call download/delete before `setup` builds the engine.
+    #[test]
+    fn commands_before_setup_do_not_panic() {
+        let state = AppState::default();
+        warm_speech(&state);
+        assert_eq!(release_speech_model(&state), Ok(()), "nothing loaded yet");
+        warm_smart(&state);
+        assert_eq!(release_smart_model(&state), Ok(()), "no server yet");
+    }
 }
 
 #[cfg(test)]
@@ -1880,6 +1931,33 @@ mod pipeline_end_state_tests {
         ] {
             assert_eq!(pipeline_end_state(&Err(e.into())), "error");
         }
+    }
+}
+
+#[cfg(test)]
+mod model_done_tests {
+    use super::model_done;
+    use crate::engine::download::DownloadError;
+
+    #[test]
+    fn success_has_no_error_or_kind() {
+        let json = serde_json::to_value(model_done("parakeet-v3", &Ok(()))).unwrap();
+        assert_eq!(
+            json,
+            serde_json::json!({"id": "parakeet-v3", "ok": true, "error": null, "kind": null})
+        );
+    }
+
+    #[test]
+    fn failure_carries_message_and_kind() {
+        let json =
+            serde_json::to_value(model_done("qwen3.5-2b", &Err(DownloadError::Offline))).unwrap();
+        assert_eq!(json["ok"], false);
+        assert_eq!(json["kind"], "offline");
+        assert_eq!(
+            json["error"],
+            "You're offline. Connect to the internet and press Retry."
+        );
     }
 }
 
@@ -1946,52 +2024,6 @@ mod hotkey_swap_tests {
 }
 
 #[cfg(test)]
-mod cloud_command_tests {
-    use super::*;
-
-    #[test]
-    fn engine_name_maps_to_provider_or_errors() {
-        assert_eq!(
-            provider_from_name("gemini").unwrap(),
-            cloud_llm::CloudProvider::Gemini
-        );
-        assert_eq!(
-            provider_from_name("claude").unwrap(),
-            cloud_llm::CloudProvider::Claude
-        );
-        // "local" has no key to manage — an explicit error beats a silent no-op.
-        assert!(provider_from_name("local").is_err());
-        assert!(provider_from_name("nonsense").is_err());
-        // Malformed names must be rejected, not coerced. "gemini:extra" was
-        // accepted as Gemini when this resolved via parse_engine_model.
-        assert!(provider_from_name("gemini:extra").is_err());
-        assert!(provider_from_name("").is_err());
-        assert!(provider_from_name("Gemini").is_err()); // case-sensitive on purpose
-    }
-
-    /// The ladder's contract, checked at the piece that can be tested without
-    /// a running app: a cloud failure yields used_llm=false plus a note, which
-    /// is what the dispatch arm branches on.
-    #[test]
-    fn cloud_failure_is_detectable_and_explained() {
-        // Empty key short-circuits before any network call.
-        let r = cloud_llm::clean(
-            "um hello world",
-            "- SKU",
-            cloud_llm::CloudProvider::Gemini,
-            "gemini-3.5-flash-lite",
-            "",
-            settings::StructureMode::None,
-        );
-        assert!(!r.used_llm, "a keyless cloud call must not report success");
-        let note = r.note.expect("failure must carry a note");
-        assert!(note.contains("API key"), "note must name the cause: {note}");
-        // And the transcript survives regardless.
-        assert_eq!(r.text, "um hello world");
-    }
-}
-
-#[cfg(test)]
 mod learning_wiring_tests {
     use crate::dictionary::Dictionary;
     use crate::learned::{self, Rule};
@@ -2010,10 +2042,7 @@ mod learning_wiring_tests {
     }
 
     /// A learned word is present in the augmented dictionary's LLM-terms
-    /// output, and absent from the base dictionary's — the raw
-    /// material the privacy contract is built from. This does not exercise
-    /// `run_pipeline` itself; `llm_terms_for_picks_the_engine_appropriate_dictionary`
-    /// below pins the actual selection that decides what a cleanup call gets.
+    /// output, and absent from the base dictionary's.
     #[test]
     fn learned_terms_appear_in_the_augmented_dictionary_only() {
         let base = Dictionary::parse("SKU = stock keeping unit");
@@ -2024,39 +2053,14 @@ mod learning_wiring_tests {
         assert!(!base.llm_terms().contains("Fan"));
     }
 
-    /// The privacy contract, pinned at the actual decision `run_pipeline`
-    /// calls: every cleanup call site goes through `llm_terms_for`, so this
-    /// exercises it directly rather than re-deriving the same assertion
-    /// against the `Dictionary` API alone. If the engine-to-dictionary mapping
-    /// is ever inverted — cloud getting learned terms, or Local losing them
-    /// — this fails; the earlier test above would not have caught that.
-    #[test]
-    fn llm_terms_for_picks_the_engine_appropriate_dictionary() {
-        let base = Dictionary::parse("SKU = stock keeping unit");
-        let rules = vec![rule("Fan")];
-        let local = base.with_extra_terms(&learned::glossary_terms(&rules));
-
-        assert!(
-            crate::llm_terms_for(crate::settings::AiEngine::Local, &base, &local).contains("Fan"),
-            "Local must get the learned term"
-        );
-        // The local-Ollama fallback after a cloud failure also passes
-        // AiEngine::Local here, even though settings.ai_engine says
-        // otherwise — this is the same call, so the same assertion covers it.
-        assert!(
-            !crate::llm_terms_for(crate::settings::AiEngine::Claude, &base, &local).contains("Fan"),
-            "a cloud engine must never get the learned term"
-        );
-        assert!(
-            !crate::llm_terms_for(crate::settings::AiEngine::Gemini, &base, &local).contains("Fan"),
-            "a cloud engine must never get the learned term"
-        );
-    }
-
     #[test]
     fn disabling_the_setting_yields_no_rules_to_apply() {
         let settings = crate::settings::Settings::default();
-        assert!(settings.learn_corrections, "learning is on by default");
+        assert_eq!(
+            settings.learn_corrections,
+            crate::platform::LEARNING_SUPPORTED,
+            "learning is on by default wherever it is supported"
+        );
     }
 
     /// Pins the stage order in `run_pipeline`: learned rules run *before*
@@ -2134,7 +2138,7 @@ mod correction_watch_tests {
         }
     }
 
-    impl crate::ax_read::FocusReader for FakeReader {
+    impl crate::platform::FocusReader for FakeReader {
         fn read(&self) -> Option<Snapshot> {
             self.reads.set(self.reads.get() + 1);
             self.queue.borrow_mut().pop_front().flatten()
@@ -2323,7 +2327,7 @@ mod correction_watch_tests {
     }
 
     /// The bug this trait exists to pin. A superseded watcher must stop
-    /// polling — it was reading whatever now has focus, for up to 30s after
+    /// polling — it was reading whatever now has focus, for up to 90s after
     /// the dot went dark — and must not clear an indicator the newer watcher
     /// now owns.
     #[test]
@@ -2340,5 +2344,111 @@ mod correction_watch_tests {
             vec![Event::Indicator(true)],
             "the newer watcher owns the dot now; this one must not clear it"
         );
+    }
+}
+
+#[cfg(test)]
+mod platform_wiring_tests {
+    use super::*;
+    use crate::platform::Trust;
+
+    /// Review focus #5: a second hotkey press while a session is processing
+    /// is refused, and the guard frees up again once the session ends.
+    #[test]
+    fn second_session_rejected_while_processing() {
+        let busy = Arc::new(AtomicBool::new(false));
+        let first = try_begin_session(&busy);
+        assert!(first.is_some());
+        assert!(try_begin_session(&busy).is_none());
+        drop(first);
+        assert!(try_begin_session(&busy).is_some());
+    }
+
+    use crate::inject::InjectError;
+    use crate::voice_commands::{Key, Segment};
+
+    /// Runs `deliver_segments` with fakes; `fail_at` is the call number
+    /// (paste or key, counting from 0) that fails. Returns the result and a
+    /// log of every call made.
+    fn deliver(fail_at: Option<usize>) -> (Result<Delivery, String>, Vec<String>) {
+        let segments = vec![
+            Segment::Text("hello".into()),
+            Segment::Key(Key::Return),
+            Segment::Text("world".into()),
+        ];
+        let log = std::cell::RefCell::new(Vec::new());
+        let step = |what: String| {
+            let n = log.borrow().len();
+            log.borrow_mut().push(what);
+            if Some(n) == fail_at {
+                Err(InjectError::Synthesis("blocked".into()))
+            } else {
+                Ok(())
+            }
+        };
+        let r = deliver_segments(
+            &segments,
+            "hello world",
+            &mut |t| step(format!("paste:{t}")),
+            &mut |k| step(format!("key:{k:?}")),
+            &mut |t| {
+                log.borrow_mut().push(format!("copy:{t}"));
+                Ok(())
+            },
+        );
+        (r, log.into_inner())
+    }
+
+    #[test]
+    fn segments_are_sent_in_order() {
+        let (r, log) = deliver(None);
+        assert_eq!(r, Ok(Delivery::Sent));
+        assert_eq!(log, ["paste:hello", "key:Return", "paste:world"]);
+    }
+
+    #[test]
+    fn failed_key_puts_the_whole_dictation_on_the_clipboard() {
+        let (r, log) = deliver(Some(1));
+        assert!(matches!(r, Ok(Delivery::Copied(_))));
+        // Stops at the failure: "world" is not pasted on its own.
+        assert_eq!(log, ["paste:hello", "key:Return", "copy:hello world"]);
+    }
+
+    #[test]
+    fn failed_first_paste_falls_back_too() {
+        let (r, log) = deliver(Some(0));
+        assert!(matches!(r, Ok(Delivery::Copied(_))));
+        assert_eq!(log, ["paste:hello", "copy:hello world"]);
+    }
+
+    /// A pipeline thread that panics mid-session must not leave Purl
+    /// refusing every later dictation.
+    #[test]
+    fn panicking_session_releases_the_guard() {
+        let busy = Arc::new(AtomicBool::new(false));
+        let held = try_begin_session(&busy).unwrap();
+        let joined = std::thread::spawn(move || {
+            let _held = held;
+            panic!("pipeline blew up");
+        })
+        .join();
+        assert!(joined.is_err());
+        assert!(try_begin_session(&busy).is_some());
+    }
+
+    /// Review focus #1: a lost Accessibility grant reaches the UI as Denied,
+    /// so Home can say "Paste needs Accessibility".
+    #[test]
+    fn trust_denied_surfaces_in_status() {
+        let s = status_payload_for(
+            crate::engine::EngineState::Loading,
+            Trust::Denied,
+            "CmdOrCtrl+Shift+Space",
+            "idle",
+        );
+        assert_eq!(s.paste_trust, Trust::Denied);
+        assert_eq!(s.learning_supported, platform::LEARNING_SUPPORTED);
+        let json = serde_json::to_value(&s).unwrap();
+        assert_eq!(json["paste_trust"], "denied");
     }
 }

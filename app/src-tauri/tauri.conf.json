@@ -4,9 +4,9 @@
   "version": "0.9.0",
   "identifier": "app.purl.desktop",
   "build": {
-    "beforeDevCommand": "npm run dev",
+    "beforeDevCommand": "npm run fetch-llama && npm run dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build",
+    "beforeBuildCommand": "npm run fetch-llama && npm run build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -23,8 +23,8 @@
         "label": "overlay",
         "url": "overlay.html",
         "title": "Purl Voice",
-        "width": 200,
-        "height": 82,
+        "width": 420,
+        "height": 100,
         "visible": false,
         "transparent": true,
         "decorations": false,
@@ -52,6 +52,9 @@
     "active": true,
     "targets": ["app", "dmg"],
     "createUpdaterArtifacts": true,
+    "resources": {
+      "vendor/llama/": "llama/"
+    },
     "macOS": {
       "signingIdentity": "Purl Self-Signed",
       "entitlements": "Entitlements.plist"
