@@ -10,9 +10,9 @@ It compares:
 - **whisper.cpp base.en**: the engine Purl used before. It runs here through
   `whisper-cli` only for the comparison. It is not part of the app.
 
-And it times **Fast cleanup** (the rule-based tidy-up) on the dictation
-transcripts. **Smart cleanup** (Qwen3.5-2B) is listed as "not measured yet"
-until it lands.
+And it times both cleanups on the dictation transcripts: **Fast** (the
+rule-based tidy-up) and **Smart** (Qwen3.5-2B on the bundled llama-server,
+through the app's own `smart_clean`).
 
 Results live in [`results/`](results/), one JSON file per run, named
 `<date>-<cpu>.json`.
@@ -23,9 +23,12 @@ You need: Rust, `curl`, `ffmpeg` (or macOS `afconvert`), and `whisper-cli`
 (`brew install whisper-cpp` on macOS).
 
 ```bash
-# 1. Purl's speech model (~670 MB) into the app-data dir, if the app hasn't already.
+# 1. Purl's speech model (~670 MB) and the Smart model (~1.4 GB) into the
+#    app-data dir, if the app hasn't already, and the pinned llama-server.
 cd app/src-tauri
 cargo run --example fetch_models
+cargo run --example fetch_models qwen3.5-2b
+(cd .. && npm run fetch-llama)
 
 # 2. Test data and the whisper baseline model into ~/Library/Caches/purl-bench
 #    (~350 MB download; nothing lands in the repo).
@@ -70,8 +73,13 @@ right, not as a real-world accuracy number.
   may already be in the OS file cache from earlier runs, so a first launch
   after a reboot can be slower. For whisper this is whisper-cli's own
   reported load time.
-- **Cleanup latency**: time per Fast cleanup call on Parakeet's 10 dictation
-  transcripts (each timed over 1,000 calls), with the default dictionary.
+- **Cleanup latency**: time per cleanup call on Parakeet's 10 dictation
+  transcripts, with the default dictionary. Fast: each timed over 1,000
+  calls. Smart: three passes over the 10 after one untimed warm-up call,
+  with the server already running (the app starts it while you talk) and
+  the app's 6-second budget. Calls that fell back to Fast are counted and
+  their reasons kept. **Server start** is the first start of llama-server,
+  which the app does ahead of time when Smart is on.
 
 Whisper is measured twice: with Metal GPU (whisper-cli's default on a Mac)
 and CPU only (`-ng`), both with one thread per core. Parakeet runs on the CPU
@@ -84,4 +92,10 @@ through ONNX Runtime, as in the app.
   Parakeet and whisper-Metal speeds matched two other runs within a few
   percent; whisper CPU-only, measured last, ranged from 0.18 to 0.36 mean RTF
   across runs, so read that row as rough.
+- macOS, Apple M1 Pro, again: [`results/2026-10-12-apple-m1-pro.json`](results/2026-10-12-apple-m1-pro.json),
+  the first run with Smart cleanup. Load was 18 at start and 26 at the end,
+  mostly Spotlight indexing (CPU use stayed low). WER is identical to the
+  earlier run. Speeds moved: Parakeet mean RTF up 3-4%, whisper-Metal up
+  to 10%, Parakeet cold load 828 → 1,101 ms, and whisper CPU-only again
+  noisy (0.31 mean RTF on dictation_10, was 0.18).
 - Windows numbers: not measured yet.
