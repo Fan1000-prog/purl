@@ -9,9 +9,11 @@ pub mod fastclean;
 mod history;
 mod inject;
 mod learned;
+mod overlay_pos;
 mod platform;
 mod secure_random;
 mod settings;
+pub mod smoke;
 mod snippets;
 mod stats;
 mod structure;
@@ -217,59 +219,58 @@ fn set_state(app: &AppHandle, state: &str) {
     }
 }
 
-/// The cursor in logical (CG point) coordinates — the only coordinate space
-/// that is global across displays on macOS. tao's cursor_position() takes the
-/// logical NSEvent.mouseLocation and multiplies it by the *primary* display's
-/// scale factor, while every per-monitor rect is scaled by that monitor's own
-/// factor, so "physical" values from the two are not comparable on a
-/// mixed-DPI setup (Retina laptop + 1x external). Divide the primary scale
-/// back out and stay logical.
-fn cursor_logical(overlay: &tauri::WebviewWindow) -> Option<(f64, f64)> {
+/// The cursor in the OS's global desktop coordinates; see `overlay_pos`.
+fn cursor_desktop(overlay: &tauri::WebviewWindow) -> Option<(f64, f64)> {
     let pos = overlay.cursor_position().ok()?;
-    let scale = overlay.primary_monitor().ok().flatten()?.scale_factor();
-    Some((pos.x / scale, pos.y / scale))
+    let primary_scale = overlay.primary_monitor().ok().flatten()?.scale_factor();
+    Some(overlay_pos::cursor_in_desktop(
+        overlay_pos::DESKTOP,
+        (pos.x, pos.y),
+        primary_scale,
+    ))
 }
 
 /// The monitor currently under the cursor — the pill lives wherever the
 /// user is actually looking, not always the primary display.
 fn monitor_at_cursor(overlay: &tauri::WebviewWindow) -> Option<tauri::Monitor> {
-    cursor_logical(overlay)
+    cursor_desktop(overlay)
         .and_then(|(x, y)| overlay.monitor_from_point(x, y).ok().flatten())
         .or_else(|| overlay.primary_monitor().ok().flatten())
 }
 
 /// Park the pill bottom-center of whichever monitor has the cursor, just
-/// above the Dock. Uses the monitor's work_area (its usable desktop space,
-/// with the Dock and menu bar already excluded by the OS) rather than its
-/// raw size — a raw-size calculation with a small margin can land the pill
-/// behind the Dock's window layer, where it's rendered but invisible.
+/// above the Dock or taskbar. Uses the monitor's work_area (its usable
+/// desktop space, with the Dock, menu bar and taskbar already excluded by the
+/// OS) rather than its raw size — a raw-size calculation with a small margin
+/// can land the pill behind the Dock's window layer, where it's rendered but
+/// invisible.
 fn position_overlay(overlay: &tauri::WebviewWindow) {
-    if let Some(monitor) = monitor_at_cursor(overlay) {
-        // Work entirely in logical points. The monitor's work_area is
-        // physical in *its* scale, but set_position with a PhysicalPosition
-        // divides by the *window's current* scale — which is still the old
-        // monitor's factor mid-move, so a physical hand-off lands the pill in
-        // the wrong place whenever the two displays have different DPIs.
-        let mscale = monitor.scale_factor();
-        let work = monitor.work_area();
-        let (wx, wy) = (
-            work.position.x as f64 / mscale,
-            work.position.y as f64 / mscale,
-        );
-        let (ww, wh) = (
-            work.size.width as f64 / mscale,
-            work.size.height as f64 / mscale,
-        );
-        let wscale = overlay.scale_factor().unwrap_or(1.0);
-        let (ow, oh) = overlay
-            .outer_size()
-            .map(|s| (s.width as f64 / wscale, s.height as f64 / wscale))
-            .unwrap_or((420.0, 100.0));
-        let margin = 8.0;
-        let x = wx + ((ww - ow).max(0.0) / 2.0);
-        let y = wy + (wh - oh - margin).max(0.0);
-        let _ = overlay.set_position(tauri::LogicalPosition { x, y });
-    }
+    let Some(monitor) = monitor_at_cursor(overlay) else {
+        return;
+    };
+    let work = monitor.work_area();
+    let work = overlay_pos::RawRect {
+        x: work.position.x as f64,
+        y: work.position.y as f64,
+        width: work.size.width as f64,
+        height: work.size.height as f64,
+    };
+    let wscale = overlay.scale_factor().unwrap_or(1.0);
+    let pill = overlay
+        .outer_size()
+        .map(|s| (s.width as f64 / wscale, s.height as f64 / wscale))
+        .unwrap_or((420.0, 100.0));
+    let (x, y) = overlay_pos::pill_origin(overlay_pos::DESKTOP, work, monitor.scale_factor(), pill);
+    // macOS positions are global points. Windows positions are global pixels:
+    // a LogicalPosition there would be converted with the window's *current*
+    // monitor's scale, which mid-move is the wrong monitor.
+    let _ = match overlay_pos::DESKTOP {
+        overlay_pos::DesktopSpace::Points => overlay.set_position(tauri::LogicalPosition { x, y }),
+        overlay_pos::DesktopSpace::Pixels => overlay.set_position(tauri::PhysicalPosition {
+            x: x as i32,
+            y: y as i32,
+        }),
+    };
 }
 
 /// Re-park the pill whenever the cursor moves to a different display.
@@ -340,21 +341,23 @@ fn spawn_overlay_click_through_watch(app: AppHandle) {
 }
 
 /// `rect` is [x, y, width, height] in logical points relative to the overlay
-/// window. The whole test runs in logical points: the cursor's "physical"
-/// value carries the primary display's scale while the window origin carries
-/// its own monitor's, so comparing them raw breaks on mixed-DPI setups.
+/// window. See `overlay_pos::cursor_over` for the mixed-DPI handling.
 fn cursor_over_overlay(overlay: &tauri::WebviewWindow, rect: [f64; 4]) -> bool {
-    let (Some((cx, cy)), Ok(origin), Ok(scale)) = (
-        cursor_logical(overlay),
+    let (Some(cursor), Ok(origin), Ok(scale)) = (
+        cursor_desktop(overlay),
         overlay.outer_position(),
         overlay.scale_factor(),
     ) else {
         return false;
     };
-    let (ox, oy) = (origin.x as f64 / scale, origin.y as f64 / scale);
-    let [x, y, w, h] = rect;
-    let m = OVERLAY_HIT_MARGIN;
-    cx >= ox + x - m && cx <= ox + x + w + m && cy >= oy + y - m && cy <= oy + y + h + m
+    overlay_pos::cursor_over(
+        overlay_pos::DESKTOP,
+        cursor,
+        (origin.x as f64, origin.y as f64),
+        scale,
+        rect,
+        OVERLAY_HIT_MARGIN,
+    )
 }
 
 /// Stream the live mic level to the UI while recording.
@@ -1878,6 +1881,7 @@ pub fn run() {
                 // a window belongs to one display's Space; joining all Spaces
                 // lets the pill render on whichever display it is parked on.
                 let _ = overlay.set_visible_on_all_workspaces(true);
+                platform::hide_from_app_switcher(&overlay);
                 position_overlay(&overlay);
                 let _ = overlay.show();
             }
