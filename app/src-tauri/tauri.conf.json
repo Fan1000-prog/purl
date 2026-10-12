@@ -50,8 +50,13 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["app", "dmg"],
+    "targets": ["app", "dmg", "nsis"],
     "createUpdaterArtifacts": true,
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser"
+      }
+    },
     "resources": {
       "vendor/llama/": "llama/"
     },

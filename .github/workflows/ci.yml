@@ -32,6 +32,10 @@ jobs:
           node-version: 22
       - run: npm ci && npm run build
         working-directory: app
+      - name: Release script tests
+        run: node --test scripts/*.test.mjs
+        working-directory: .
+        shell: bash
       - run: cargo fmt --check
       - run: cargo clippy --all-targets -- -D warnings
       # Unit tests and everything under tests/ (integration tests).

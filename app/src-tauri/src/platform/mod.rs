@@ -129,6 +129,18 @@ pub fn focus_reader() -> Box<dyn FocusReader> {
     Box::new(NoReader)
 }
 
+/// Keep a window out of the app switcher. Windows needs the tool-window
+/// style for Alt-Tab; macOS already leaves a skip-taskbar window out of
+/// Cmd-Tab.
+pub fn hide_from_app_switcher(window: &tauri::WebviewWindow) {
+    #[cfg(windows)]
+    if let Ok(hwnd) = window.hwnd() {
+        windows::make_tool_window(hwnd);
+    }
+    #[cfg(not(windows))]
+    let _ = window;
+}
+
 /// Where a bundled sidecar binary lives: `<resources>/llama/<name>`, with
 /// `.exe` on Windows.
 pub fn sidecar_path(resource_dir: &Path, name: &str) -> PathBuf {
