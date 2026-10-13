@@ -829,7 +829,7 @@ fn run_transform_pipeline(app: &AppHandle, t: &transforms::Transform) -> Result<
     // result on the clipboard; keep it there rather than restoring the old
     // clipboard. A clipboard error means the result never got there.
     if let Err(e) = inject::inject(&out) {
-        let on_clipboard = !matches!(e, inject::InjectError::Clipboard(_));
+        let on_clipboard = e.left_text_on_clipboard();
         log_line(
             app,
             &format!("transform paste FAILED: {e} (result on clipboard: {on_clipboard})"),
