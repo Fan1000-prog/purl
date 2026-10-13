@@ -288,6 +288,8 @@ fn body_longer_than_registry_size_is_cut_off() {
     // rather than waiting for the server to finish. Checked on the client's
     // side: how much the server got onto the wire depends on socket buffers,
     // which on Windows can take the whole body before the hang-up.
+    // A client without the cap also ends in Checksum; the time check below
+    // is what proves the cap.
     assert_eq!(result, Err(DownloadError::Checksum));
     assert!(
         t0.elapsed() < OVERSIZED_HOLD / 2,
