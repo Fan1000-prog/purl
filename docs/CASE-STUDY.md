@@ -112,11 +112,13 @@ builds for Intel Macs, so Intel support waits until people ask for it.
 
 From the benchmark run on 2026-10-12, on an Apple M1 Pro
 ([`bench/results/2026-10-12-apple-m1-pro.json`](../bench/results/2026-10-12-apple-m1-pro.json)). The machine was busy during
-the run, so speeds are on the slow side.
+the run, so speeds are on the slow side. Parakeet's word error rates are
+from after the decoder fix (below); its speed and load time are from
+before it and weren't re-measured.
 
 | | whisper.cpp base.en (VendastaTalk) | Parakeet v3 (Purl) |
 |---|---|---|
-| Word error rate, LibriSpeech (100 clips) | 2.9% | 3.2% <!-- update after the TDT fix --> |
+| Word error rate, LibriSpeech (100 clips) | 2.9% | 2.2% |
 | Word error rate, 10 dictation clips (synthetic) | 1.6% | 0.8% |
 | Real-time factor, LibriSpeech, mean | 0.026 on the GPU, 0.350 on the CPU | 0.041 on the CPU |
 | Model load, cold | 81 ms (GPU), 68 ms (CPU) | 1101 ms |
@@ -124,12 +126,19 @@ the run, so speeds are on the slow side.
 The dictation clips are synthetic: macOS `say` read them, so they're easier
 than real speech.
 
-Honest reading: on audiobook speech the old engine is a little more
-accurate today, and with a GPU it's faster. Parakeet is ahead on the
-dictation clips, and the model supports 25 European languages, where base.en
-is English only. Purl has only been measured in English so far.
-A fix to Purl's Parakeet decoder is being measured now; the LibriSpeech line
-will be updated when it lands.
+The first run put Parakeet at 3.2% on LibriSpeech, behind the old engine.
+27 of its 75 wrong words came from one bug: the decoder ignored part of
+Parakeet's output (the TDT duration head), so on 3 clips it wrote "Saint Francis X X X X X X
+X X X Xavier". [PR #22](https://github.com/Fan1000-prog/purl/pull/22)
+fixed it. Re-scored on 2026-10-12 on the same Mac with the benchmark's own
+scoring code, Parakeet gets 51 of 2,346 words wrong (2.2%), against 67 for
+whisper base.en (2.9%). The dictation clips came out the same.
+Per-clip transcripts: [`bench/results/2026-10-12-apple-m1-pro-tdt-fix/`](../bench/results/2026-10-12-apple-m1-pro-tdt-fix/).
+
+Honest reading: Parakeet is now more accurate on both sets. With a GPU,
+the old engine is still faster. The Parakeet model also supports 25
+European languages, where base.en is English only. Purl has only been
+measured in English so far.
 
 Cleanup on the same dictation transcripts:
 
