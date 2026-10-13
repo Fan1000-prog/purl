@@ -635,6 +635,10 @@ fn on_hotkey(app: &AppHandle, shortcut_state: ShortcutState) {
                     "hotkey: tap shorter than MIN_HOLD — recording discarded",
                 );
                 cancel_dictation_impl(app);
+                // The same notice as a recording too short to transcribe: a
+                // tap is the usual sign of someone pressing instead of holding.
+                set_state(app, "error");
+                report_dictation_error(app, TOO_SHORT);
             } else {
                 stop_and_transcribe(app);
             }
@@ -720,11 +724,19 @@ fn stop_and_transcribe(app: &AppHandle) {
         drop(session);
         set_state(&app, pipeline_end_state(&result));
         if let Err(e) = result {
-            log_line(&app, &format!("pipeline ERROR: {e}"));
-            let _ = app.emit("pipeline-error", e.clone());
-            notify(&app, &e);
+            report_dictation_error(&app, &e);
         }
     });
+}
+
+/// What a dictation too short to use tells the user.
+const TOO_SHORT: &str = "Didn't catch that — hold the key a little longer.";
+
+/// Log a failed dictation, show it on Home and as a notification.
+fn report_dictation_error(app: &AppHandle, e: &str) {
+    log_line(app, &format!("pipeline ERROR: {e}"));
+    let _ = app.emit("pipeline-error", e.to_string());
+    notify(app, e);
 }
 
 /// The `state` event that closes a dictation. The overlay flashes "Sent" or
@@ -907,7 +919,7 @@ fn run_pipeline(app: &AppHandle, recorder: Recorder, record_ms: u64) -> Result<(
         .stop_samples()
         .map_err(|e| format!("Recording failed: {e}"))?;
     if pcm.len() < 16000 * 3 / 10 {
-        return Err("Didn't catch that — hold the key a little longer.".into());
+        return Err(TOO_SHORT.into());
     }
 
     let t0 = std::time::Instant::now();
