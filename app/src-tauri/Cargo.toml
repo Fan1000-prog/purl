@@ -47,3 +47,10 @@ windows = { version = "0.61", features = ["Win32_Foundation", "Win32_NetworkMana
 [[example]]
 name = "bench"
 test = true
+
+# transcribe-rs 0.3.12 ignores Parakeet's TDT duration head, so it can emit
+# one token up to 10 times on a frame ("Francis X X X … Xavier"). This is
+# 0.3.12 plus upstream PR cjpais/transcribe-rs#90, pinned by commit. Drop it
+# once a release includes that PR.
+[patch.crates-io]
+transcribe-rs = { git = "https://github.com/Fan1000-prog/transcribe-rs", rev = "6e5a7d08e75a1a9db2f9bde12e113a108593ab13" }
