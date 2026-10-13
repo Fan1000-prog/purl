@@ -6,7 +6,8 @@ change them in purl-site and copy them in again, so the app and the landing
 page keep one token set.
 
 Copied: `tokens.css`, `fonts/` (OFL), `components/` (pill, orb and base
-styles), and `logo/purl-favicon-*.svg`. Not copied: the style guide page
+styles), `logo/purl-favicon-*.svg` and `logo/purl-app-icon-macos-*.svg` (the
+app icon on Apple's grid, deep and colour). Not copied: the style guide page
 (`brand.html`, `brand.ts`, `brand.css`), `contrast.ts` (the app has its own check,
 `tests/contrast.mjs`, over the pairs it uses), the logo PNGs and the
 full-size marks (the app icon sources live in `src-tauri/icons/source/`).

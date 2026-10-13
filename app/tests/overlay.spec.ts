@@ -50,7 +50,7 @@ async function capture(page: Page, name: string) {
 }
 
 const STATES = [
-  { name: "idle", drive: async (_: Page) => {}, pill: "idle", label: "Press ⌘ ⇧ Space" },
+  { name: "idle", drive: async (_: Page) => {}, pill: "idle", label: "Hold ⌘ ⇧ Space" },
   { name: "listening", drive: (p: Page) => emit(p, "state", "recording"), pill: "listening", label: "00:00" },
   { name: "polishing", drive: (p: Page) => emit(p, "state", "processing"), pill: "polishing", label: "Polishing" },
   { name: "sent", drive: (p: Page) => emit(p, "result", { cleaned: "hi" }), pill: "sent", label: "Sent clean" },
@@ -74,14 +74,14 @@ test("idle shows the real hotkey from settings, and follows a change", async ({ 
     (window as any).__results = { get_status: { hotkey: "Alt+Space", state: "idle" } };
   });
   await open(page);
-  await expect.poll(() => label(page)).toBe("Press ⌥ Space");
+  await expect.poll(() => label(page)).toBe("Hold ⌥ Space");
   await emit(page, "hotkey-changed", "CmdOrCtrl+Shift+D");
-  await expect.poll(() => label(page)).toBe("Press ⌘ ⇧ D");
+  await expect.poll(() => label(page)).toBe("Hold ⌘ ⇧ D");
 });
 
 test("Windows spells the hotkey out", async ({ page }) => {
   await open(page, "windows");
-  await expect.poll(() => label(page)).toBe("Press Ctrl Shift Space");
+  await expect.poll(() => label(page)).toBe("Hold Ctrl Shift Space");
 });
 
 test("mic level drives the waveform while recording", async ({ page }) => {
@@ -196,4 +196,59 @@ test("the hit rect is re-sent when the pill changes size on its own", async ({ p
   const box = (await page.locator("#pill").boundingBox())!;
   expect(after[2]).toBeGreaterThan(before[2]);
   expect(after).toEqual([box.x, box.y, box.width, box.height]);
+});
+
+test("a render that changes nothing doesn't re-announce the pill", async ({ page }) => {
+  await open(page);
+  await settle(page);
+  // Count every write to the pill's screen-reader live region from here on.
+  await page.locator("#capsule .purl-sr-only").evaluate((el) => {
+    (window as any).__announced = 0;
+    new MutationObserver((m) => ((window as any).__announced += m.length)).observe(el, {
+      childList: true,
+      characterData: true,
+      subtree: true,
+    });
+  });
+  const announced = () => page.evaluate(() => (window as any).__announced as number);
+  // Engine updates (speech model ready, then unloaded) and a repeat idle.
+  await emit(page, "engine-status", { stt: { state: "ready" }, llm: { state: "idle" } });
+  await emit(page, "engine-status", { stt: { state: "idle" }, llm: { state: "idle" } });
+  await emit(page, "state", "idle");
+  await page.waitForTimeout(50);
+  expect(await announced()).toBe(0);
+  await emit(page, "state", "recording");
+  await expect.poll(announced).toBeGreaterThan(0);
+});
+
+test("the hit rect is sent only when it changes", async ({ page }) => {
+  await open(page);
+  await settle(page);
+  const sent = () =>
+    page.evaluate(() => (window as any).__invoked.filter((c: any) => c.cmd === "set_overlay_hit_rect").length);
+  const before = await sent();
+  await emit(page, "engine-status", { stt: { state: "ready" }, llm: { state: "idle" } });
+  await emit(page, "state", "idle");
+  await page.waitForTimeout(100);
+  expect(await sent()).toBe(before);
+  await emit(page, "state", "processing");
+  await expect.poll(() => lastHitRect(page)).toBeNull();
+  expect(await sent()).toBe(before + 1);
+});
+
+test("a hit rect Rust didn't take is sent again", async ({ page }) => {
+  await page.addInitScript(() => ((window as any).__rejects = { set_overlay_hit_rect: true }));
+  await open(page);
+  await settle(page);
+  const sent = () =>
+    page.evaluate(() => (window as any).__invoked.filter((c: any) => c.cmd === "set_overlay_hit_rect").length);
+  const before = await sent();
+  await page.evaluate(() => ((window as any).__rejects = {}));
+  await emit(page, "state", "idle");
+  await expect.poll(sent).toBe(before + 1);
+});
+
+test("the pill's tooltip says hold to talk", async ({ page }) => {
+  await open(page);
+  await expect(page.locator("#pill")).toHaveAttribute("title", "Hold your dictation hotkey and talk");
 });

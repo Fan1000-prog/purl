@@ -1,5 +1,5 @@
 // Persistent voice pill: the brand dictation pill (src/brand/components),
-// driven by the app's events. Idle shows "Press <hotkey>" (click to start
+// driven by the app's events. Idle shows "Hold <hotkey>" (click to start
 // dictating); recording shows the live waveform and timer from "audio-level"
 // events, with ✕ cancel and ✓ finish-and-transcribe beside it; processing is
 // "Polishing" ("Warming up…" while the speech model loads); a finished
@@ -40,7 +40,7 @@ const control = document.getElementById("pill")!;
 const fillEl = document.getElementById("countdown-fill")!;
 const pill = mountPill(document.getElementById("capsule")!, {
   hotkey: pillHotkey(DEFAULT_HOTKEY),
-  idleLabel: "Press",
+  idleLabel: "Hold",
 });
 
 // What Rust last said, and a short-lived flash (done / error / caption) that
@@ -57,14 +57,26 @@ function currentView(): View {
   return appState === "idle" && flash ? flash : appState;
 }
 
+// The view and label the pill last showed. Setting the pill rewrites its
+// live region, which makes a screen reader say it again, so a render that
+// changes neither (a repeat state event, an engine-status update) skips it.
+let shown = "";
+
 function render() {
   const view = currentView();
   document.body.dataset.view = view;
   document.body.dataset.app = appState;
-  if (view === "error") pill.error(ERROR_TEXT);
-  else if (view === "celebrate") pill.set("sent", caption);
-  else if (view === "processing" && warming) pill.set("polishing", WARMING_TEXT);
-  else pill.set(PILL_STATE[view]);
+  const label =
+    view === "error" ? ERROR_TEXT
+    : view === "celebrate" ? caption
+    : view === "processing" && warming ? WARMING_TEXT
+    : undefined;
+  const next = `${view}\n${label ?? ""}`;
+  if (next !== shown) {
+    shown = next;
+    if (view === "error") pill.error(ERROR_TEXT);
+    else pill.set(PILL_STATE[view], label);
+  }
   requestAnimationFrame(reportHitRect);
 }
 
@@ -82,11 +94,17 @@ function showFlash(kind: Flash, ms: number) {
 // other apps' controls. Rust keeps it click-through and only lets clicks land
 // inside the bounds reported here, so the empty space around the pill never
 // swallows a click meant for the app underneath. While processing the pill
-// isn't interactive, so it reports nothing.
+// isn't interactive, so it reports nothing. Only a changed rect is sent;
+// one Rust didn't take is sent again on the next report.
+let lastHitRect = "";
 function reportHitRect() {
   const r = appState === "processing" ? null : control.getBoundingClientRect();
-  void invoke("set_overlay_hit_rect", {
-    rect: r ? [r.left, r.top, r.width, r.height] : null,
+  const rect = r ? [r.left, r.top, r.width, r.height] : null;
+  const key = JSON.stringify(rect);
+  if (key === lastHitRect) return;
+  lastHitRect = key;
+  invoke("set_overlay_hit_rect", { rect }).catch(() => {
+    if (lastHitRect === key) lastHitRect = "";
   });
 }
 window.addEventListener("resize", reportHitRect);

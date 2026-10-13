@@ -82,6 +82,9 @@ struct HotkeyPress {
     /// True between Pressed and Released — macOS key-repeat fires extra
     /// Pressed events while the hotkey is held; those must be ignored.
     is_down: bool,
+    /// When this press started a recording. `None` when the press found one
+    /// already running (started from the button or tray): its release stops
+    /// that recording, however short the press.
     pressed_at: Option<std::time::Instant>,
 }
 
@@ -309,12 +312,13 @@ const OVERLAY_HIT_MARGIN: f64 = 6.0;
 /// Keep the pill click-through except while the cursor is actually over it.
 ///
 /// The overlay window (420x100 pt) is much bigger than the control it draws —
-/// a ~170 pt "Press ⌘⇧Space" pill when idle — because it also has room for the
-/// recording pill with its ✕ and ✓ buttons and for captions. A normal window swallows mouse events across its
-/// whole rect, not just where pixels are drawn, so the empty space around the
-/// mic became an invisible dead zone: the pill is always-on-top and parked
-/// bottom-center, exactly where apps like Google Meet put their control bar,
-/// and clicks aimed at those controls died silently.
+/// a ~170 pt "Press ⌘⇧Space" pill when idle — because it also has room for
+/// the recording pill with its ✕ and ✓ buttons and for captions. A normal
+/// window swallows mouse events across its whole rect, not just where pixels
+/// are drawn, so the empty space around the pill became an invisible dead
+/// zone: the pill is always-on-top and parked bottom-center, exactly where
+/// apps like Google Meet put their control bar, and clicks aimed at those
+/// controls died silently.
 ///
 /// macOS delivers no mouse events at all to a click-through window, so hover
 /// can't be detected in the webview. Instead the global cursor position is
@@ -604,7 +608,9 @@ fn route_hotkey(app: &AppHandle, pressed: &Shortcut, shortcut_state: ShortcutSta
 
 /// Hotkey semantics: pure push-to-talk. Press starts recording, release
 /// stops and transcribes. Releases under MIN_HOLD are discarded as
-/// accidental taps. Key-repeat Pressed events while held are ignored.
+/// accidental taps. Key-repeat Pressed events while held are ignored. A
+/// press while a recording from the button or tray is running stops it on
+/// release, tap or not.
 fn on_hotkey(app: &AppHandle, shortcut_state: ShortcutState) {
     let state = app.state::<AppState>();
     match shortcut_state {
@@ -615,7 +621,8 @@ fn on_hotkey(app: &AppHandle, shortcut_state: ShortcutState) {
                     return; // key repeat
                 }
                 press.is_down = true;
-                press.pressed_at = Some(std::time::Instant::now());
+                let recording = state.recorder.lock().unwrap().is_some();
+                press.pressed_at = (!recording).then(std::time::Instant::now);
             }
             start_dictation(app);
         }
@@ -625,19 +632,44 @@ fn on_hotkey(app: &AppHandle, shortcut_state: ShortcutState) {
                 press.is_down = false;
                 press.pressed_at.take().map(|t| t.elapsed())
             };
-            if state.recorder.lock().unwrap().is_none() {
-                return; // nothing recording (e.g. start failed)
-            }
-            if held.is_some_and(|d| d < MIN_HOLD) {
-                log_line(
-                    app,
-                    "hotkey: tap shorter than MIN_HOLD — recording discarded",
-                );
-                cancel_dictation_impl(app);
-            } else {
-                stop_and_transcribe(app);
+            let recording = state.recorder.lock().unwrap().is_some();
+            match on_release(recording, held) {
+                Release::Ignore => {}
+                Release::Discard => {
+                    log_line(
+                        app,
+                        "hotkey: tap shorter than MIN_HOLD — recording discarded",
+                    );
+                    cancel_dictation_impl(app);
+                    // The same notice as a recording too short to transcribe:
+                    // a tap is the usual sign of pressing instead of holding.
+                    set_state(app, "error");
+                    report_dictation_error(app, TOO_SHORT);
+                }
+                Release::Transcribe => stop_and_transcribe(app),
             }
         }
+    }
+}
+
+/// What a hotkey release does.
+#[derive(Debug, PartialEq)]
+enum Release {
+    /// Nothing is recording (the start failed, or it was already stopped).
+    Ignore,
+    /// A tap that started its own recording: too short to be dictation.
+    Discard,
+    Transcribe,
+}
+
+/// `held` is how long the press that started this recording lasted, or
+/// `None` when the press didn't start it (it found a button or tray
+/// recording running), so the release just stops it.
+fn on_release(recording: bool, held: Option<std::time::Duration>) -> Release {
+    match held {
+        _ if !recording => Release::Ignore,
+        Some(d) if d < MIN_HOLD => Release::Discard,
+        _ => Release::Transcribe,
     }
 }
 
@@ -719,11 +751,19 @@ fn stop_and_transcribe(app: &AppHandle) {
         drop(session);
         set_state(&app, pipeline_end_state(&result));
         if let Err(e) = result {
-            log_line(&app, &format!("pipeline ERROR: {e}"));
-            let _ = app.emit("pipeline-error", e.clone());
-            notify(&app, &e);
+            report_dictation_error(&app, &e);
         }
     });
+}
+
+/// What a dictation too short to use tells the user.
+const TOO_SHORT: &str = "Didn't catch that — hold the key a little longer.";
+
+/// Log a failed dictation, show it on Home and as a notification.
+fn report_dictation_error(app: &AppHandle, e: &str) {
+    log_line(app, &format!("pipeline ERROR: {e}"));
+    let _ = app.emit("pipeline-error", e.to_string());
+    notify(app, e);
 }
 
 /// The `state` event that closes a dictation. The overlay flashes "Sent" or
@@ -824,18 +864,19 @@ fn run_transform_pipeline(app: &AppHandle, t: &transforms::Transform) -> Result<
     };
 
     // The selection is still highlighted in the target app, so the paste
-    // replaces it in place. If the paste fails, `inject` leaves the result on
-    // the clipboard; keep it there rather than restoring the old clipboard.
+    // replaces it in place. If the paste keystroke fails, `inject` leaves the
+    // result on the clipboard; keep it there rather than restoring the old
+    // clipboard. A clipboard error means the result never got there.
     if let Err(e) = inject::inject(&out) {
+        let on_clipboard = e.left_text_on_clipboard();
         log_line(
             app,
-            &format!("transform paste FAILED: {e} -> clipboard fallback"),
+            &format!("transform paste FAILED: {e} (result on clipboard: {on_clipboard})"),
         );
-        return Err(format!(
-            "Couldn't paste the {} result, so it's on your clipboard — paste with {}.",
-            t.name,
-            platform::PASTE_SHORTCUT
-        ));
+        if !on_clipboard {
+            inject::restore_clipboard(&previous);
+        }
+        return Err(transform_paste_error(&t.name, on_clipboard));
     }
     inject::restore_clipboard(&previous);
 
@@ -850,6 +891,19 @@ fn run_transform_pipeline(app: &AppHandle, t: &transforms::Transform) -> Result<
         ),
     );
     Ok(())
+}
+
+/// What to tell the user when a transform's result couldn't be pasted,
+/// depending on whether it was left on the clipboard.
+fn transform_paste_error(name: &str, on_clipboard: bool) -> String {
+    if on_clipboard {
+        format!(
+            "Couldn't paste the {name} result, so it's on your clipboard — paste with {}.",
+            platform::PASTE_SHORTCUT
+        )
+    } else {
+        format!("Couldn't paste the {name} result: the clipboard isn't working. Your text is unchanged.")
+    }
 }
 
 /// How a dictation reached the user in paste mode.
@@ -906,7 +960,7 @@ fn run_pipeline(app: &AppHandle, recorder: Recorder, record_ms: u64) -> Result<(
         .stop_samples()
         .map_err(|e| format!("Recording failed: {e}"))?;
     if pcm.len() < 16000 * 3 / 10 {
-        return Err("Didn't catch that — hold the key a little longer.".into());
+        return Err(TOO_SHORT.into());
     }
 
     let t0 = std::time::Instant::now();
@@ -1582,17 +1636,18 @@ fn delete_model(app: AppHandle, state: tauri::State<AppState>, id: String) -> Re
     if state.downloads.is_running(spec.id) {
         return Err("Cancel the download first".into());
     }
-    if spec.id == engine::stt::MODEL_ID {
-        release_speech_model(&state)?;
-    }
-    let smart_model = state.settings.lock().unwrap().smart_model.clone();
-    if spec.id == smart_model {
-        release_smart_model(&state)?;
-    }
     let dir = engine::models::model_dir(&app_support_dir(&app), spec.id);
-    match std::fs::remove_dir_all(&dir) {
-        Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e.to_string()),
-        _ => {}
+    let remove = || match std::fs::remove_dir_all(&dir) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(e.to_string()),
+        _ => Ok(()),
+    };
+    let smart_model = state.settings.lock().unwrap().smart_model.clone();
+    if spec.id == engine::stt::MODEL_ID {
+        delete_speech_model(&state, remove)?;
+    } else if spec.id == smart_model {
+        delete_smart_model(&state, remove)?;
+    } else {
+        remove()?;
     }
     state.downloads.clear_error(spec.id);
     if spec.kind == engine::models::Kind::Llm {
@@ -1638,12 +1693,18 @@ fn warm_smart(state: &AppState) {
     }
 }
 
-/// Stop the Smart server so its model files can be deleted. Before `setup`
-/// has built the engine nothing is running, so there is nothing to release.
-fn release_smart_model(state: &AppState) -> Result<(), String> {
+/// Stop the Smart server and delete its model with `remove`, with no start
+/// in between. Before `setup` has built the engine nothing is running, so
+/// there is nothing to stop.
+fn delete_smart_model(
+    state: &AppState,
+    remove: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
     match state.llm.get() {
-        Some(engine) if !engine.release() => Err("Stop using this model first".into()),
-        _ => Ok(()),
+        Some(engine) => engine
+            .release_and(remove)
+            .unwrap_or_else(|| Err("Stop using this model first".into())),
+        None => remove(),
     }
 }
 
@@ -1678,7 +1739,7 @@ fn start_llm(app: &AppHandle) {
     // Windows ties the server to a Job Object instead of a PID file.
     let pid_file = cfg!(unix).then(|| app_data.join("llama.pid"));
     if let Some(pid_file) = &pid_file {
-        engine::sidecar::reap_stale(pid_file);
+        engine::sidecar::reap_stale(pid_file, &bin);
     }
     let engine = LlamaServerEngine::new(bin, model, pid_file);
     let emit_app = app.clone();
@@ -1719,12 +1780,18 @@ fn warm_speech(state: &AppState) {
     }
 }
 
-/// Let go of the speech model so its files can be deleted. Before `setup`
-/// has built the engine nothing is loaded, so there is nothing to release.
-fn release_speech_model(state: &AppState) -> Result<(), String> {
+/// Let go of the speech model and delete its files with `remove`, with no
+/// load in between. Before `setup` has built the engine nothing is loaded,
+/// so there is nothing to let go of.
+fn delete_speech_model(
+    state: &AppState,
+    remove: impl FnOnce() -> Result<(), String>,
+) -> Result<(), String> {
     match state.stt.get() {
-        Some(engine) if !engine.release() => Err("Stop using this model first".into()),
-        _ => Ok(()),
+        Some(engine) => engine
+            .release_and(remove)
+            .unwrap_or_else(|| Err("Stop using this model first".into())),
+        None => remove(),
     }
 }
 
@@ -1911,16 +1978,50 @@ pub fn run() {
 
 #[cfg(test)]
 mod speech_engine_access_tests {
-    use super::{release_smart_model, release_speech_model, warm_smart, warm_speech, AppState};
+    use super::{delete_smart_model, delete_speech_model, warm_smart, warm_speech, AppState};
 
     /// A webview can call download/delete before `setup` builds the engine.
     #[test]
     fn commands_before_setup_do_not_panic() {
         let state = AppState::default();
         warm_speech(&state);
-        assert_eq!(release_speech_model(&state), Ok(()), "nothing loaded yet");
+        assert_eq!(
+            delete_speech_model(&state, || Ok(())),
+            Ok(()),
+            "nothing loaded yet"
+        );
         warm_smart(&state);
-        assert_eq!(release_smart_model(&state), Ok(()), "no server yet");
+        assert_eq!(
+            delete_smart_model(&state, || Ok(())),
+            Ok(()),
+            "no server yet"
+        );
+    }
+}
+
+#[cfg(test)]
+mod hotkey_release_tests {
+    use super::{on_release, Release, MIN_HOLD};
+    use std::time::Duration;
+
+    #[test]
+    fn a_tap_that_started_the_recording_is_discarded() {
+        let tap = MIN_HOLD - Duration::from_millis(1);
+        assert_eq!(on_release(true, Some(tap)), Release::Discard);
+        assert_eq!(on_release(true, Some(MIN_HOLD)), Release::Transcribe);
+    }
+
+    /// Started from the button or tray: the press found it running, so a
+    /// tap stops and transcribes it instead of throwing the audio away.
+    #[test]
+    fn a_tap_on_someone_elses_recording_transcribes_it() {
+        assert_eq!(on_release(true, None), Release::Transcribe);
+    }
+
+    #[test]
+    fn nothing_recording_is_ignored() {
+        assert_eq!(on_release(false, Some(Duration::ZERO)), Release::Ignore);
+        assert_eq!(on_release(false, None), Release::Ignore);
     }
 }
 
@@ -1938,6 +2039,20 @@ mod pipeline_end_state_tests {
         ] {
             assert_eq!(pipeline_end_state(&Err(e.into())), "error");
         }
+    }
+}
+
+#[cfg(test)]
+mod transform_paste_error_tests {
+    use super::transform_paste_error;
+
+    #[test]
+    fn says_the_result_is_on_the_clipboard_only_when_it_is() {
+        let kept = transform_paste_error("Polish", true);
+        assert!(kept.contains("it's on your clipboard"), "{kept}");
+        let lost = transform_paste_error("Polish", false);
+        assert!(!lost.contains("on your clipboard"), "{lost}");
+        assert!(lost.contains("Your text is unchanged"), "{lost}");
     }
 }
 

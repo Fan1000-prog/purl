@@ -96,6 +96,12 @@ pub(crate) trait Server: Send + Sync {
         body: &serde_json::Value,
         timeout: Duration,
     ) -> Result<serde_json::Value, ChatError>;
+
+    /// The server's process id, for tests that watch it die.
+    #[cfg(test)]
+    fn pid(&self) -> Option<u32> {
+        None
+    }
 }
 
 /// The real thing: a `llama-server` sidecar and an HTTP client for it.
@@ -130,6 +136,11 @@ impl Server for LlamaServer {
                 ChatError::Other(e.to_string())
             }
         })
+    }
+
+    #[cfg(test)]
+    fn pid(&self) -> Option<u32> {
+        Some(self.sidecar.lock().unwrap().pid())
     }
 }
 
@@ -258,21 +269,30 @@ impl LlamaServerEngine {
         self.notify();
     }
 
-    /// Stop the server so its model file can be deleted. False while it is
-    /// starting or answering a request.
-    pub fn release(&self) -> bool {
-        let busy = {
-            let slot = self.slot.lock().unwrap();
-            match &slot.phase {
-                Phase::Starting => true,
-                Phase::Running(s) => Arc::strong_count(s) > 1,
-                _ => false,
+    /// Stop the server and run `remove`, which deletes its model file, all
+    /// under the engine's lock: a dictation can neither take the server
+    /// mid-check nor start one on a half-deleted file (and fail). `None`,
+    /// without running `remove`, while it is starting or answering a request.
+    pub fn release_and<R>(&self, remove: impl FnOnce() -> R) -> Option<R> {
+        let removed = {
+            let mut slot = self.slot.lock().unwrap();
+            let idle = match &slot.phase {
+                Phase::Starting => false,
+                Phase::Running(s) => Arc::strong_count(s) == 1,
+                _ => true,
+            };
+            if !idle {
+                return None;
             }
+            slot.generation += 1;
+            // Killed under the lock, unlike `stop_when`: Windows can't delete
+            // a file the server still holds open.
+            drop(std::mem::replace(&mut slot.phase, Phase::Stopped));
+            remove()
         };
-        if !busy {
-            self.stop_when(|_| true);
-        }
-        !busy
+        self.started.notify_all();
+        self.notify();
+        Some(removed)
     }
 
     /// Stop the server now, whatever it is doing. For app exit.
@@ -635,10 +655,77 @@ pub(crate) mod tests {
     fn release_and_shutdown_stop_the_server() {
         let h = harness(0, false, "Hello.", false);
         h.engine.complete("s", "u", BUDGET).unwrap();
-        assert!(h.engine.release());
+        assert!(h.engine.release_and(|| ()).is_some());
         assert!(h.dropped.load(Ordering::SeqCst));
         h.engine.complete("s", "u", BUDGET).unwrap();
         h.engine.shutdown();
+        assert_eq!(h.engine.status(), EngineState::Idle);
+    }
+
+    #[test]
+    fn release_waits_for_a_request_in_flight() {
+        let h = harness(0, false, "Hello.", false);
+        h.engine.complete("s", "u", BUDGET).unwrap();
+        // A dictation holds the server, as `complete` does mid-request.
+        let in_flight = h.engine.acquire(Instant::now() + BUDGET).unwrap();
+        assert!(
+            h.engine.release_and(|| ()).is_none(),
+            "released mid-request"
+        );
+        assert!(!h.dropped.load(Ordering::SeqCst));
+        assert_eq!(h.engine.status(), EngineState::Ready);
+        drop(in_flight);
+        assert!(h.engine.release_and(|| ()).is_some());
+        assert!(h.dropped.load(Ordering::SeqCst));
+        assert!(
+            h.engine.release_and(|| ()).is_some(),
+            "already stopped counts as released"
+        );
+    }
+
+    /// A start asked for while the files are being deleted waits, then finds
+    /// the model gone: Missing, never a failed start on half-deleted files.
+    #[test]
+    fn nothing_starts_while_the_model_is_deleted() {
+        let installed = Arc::new(AtomicBool::new(true));
+        let launches = Arc::new(AtomicUsize::new(0));
+        let (i, l) = (installed.clone(), launches.clone());
+        let engine = LlamaServerEngine::with_backend(
+            PathBuf::from("/m/qwen.gguf"),
+            Box::new(move |_: &Path| i.load(Ordering::SeqCst)),
+            Box::new(move |_: &Path| {
+                l.fetch_add(1, Ordering::SeqCst);
+                Err("the model file is half gone".into())
+            }),
+        );
+        let e = engine.clone();
+        let removed = engine.release_and(|| {
+            let dictation = std::thread::spawn(move || e.warm());
+            std::thread::sleep(Duration::from_millis(100));
+            installed.store(false, Ordering::SeqCst);
+            dictation
+        });
+        removed.unwrap().join().unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+        assert_eq!(launches.load(Ordering::SeqCst), 0);
+        assert_eq!(engine.status(), EngineState::Missing);
+    }
+
+    #[test]
+    fn release_refuses_while_starting() {
+        let h = harness(300, false, "Hello.", false);
+        h.engine.warm();
+        assert_eq!(h.engine.status(), EngineState::Loading);
+        assert!(h.engine.release_and(|| ()).is_none());
+        assert_eq!(h.engine.status(), EngineState::Loading);
+    }
+
+    #[test]
+    fn release_clears_a_failed_start() {
+        let h = harness(0, true, "", false);
+        let _ = h.engine.complete("s", "u", BUDGET);
+        assert!(matches!(h.engine.status(), EngineState::Failed { .. }));
+        assert!(h.engine.release_and(|| ()).is_some());
         assert_eq!(h.engine.status(), EngineState::Idle);
     }
 
@@ -763,8 +850,10 @@ pub(crate) mod tests {
         }
         assert_eq!(engine.status(), EngineState::Ready);
         eprintln!("llama-server ready in {:?}", t0.elapsed());
+        // This engine's own server: other real-model tests may run theirs
+        // alongside it.
         let pid = match &engine.slot.lock().unwrap().phase {
-            Phase::Running(_) => server_pid(),
+            Phase::Running(s) => s.pid().expect("a real server has a PID"),
             _ => unreachable!(),
         };
         engine.shutdown();
@@ -776,19 +865,6 @@ pub(crate) mod tests {
             );
             std::thread::sleep(Duration::from_millis(20));
         }
-    }
-
-    /// The one llama-server this test process started.
-    fn server_pid() -> u32 {
-        let out = std::process::Command::new("pgrep")
-            .args(["-P", &std::process::id().to_string(), "llama-server"])
-            .output()
-            .unwrap();
-        String::from_utf8(out.stdout)
-            .unwrap()
-            .trim()
-            .parse()
-            .unwrap()
     }
 
     fn process_alive(pid: u32) -> bool {

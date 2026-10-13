@@ -20,6 +20,19 @@ pub enum InjectError {
     Synthesis(String),
 }
 
+impl InjectError {
+    /// True when `inject` failed after putting the text on the clipboard, so
+    /// the user can paste it by hand. A clipboard error means it never got
+    /// there.
+    pub fn left_text_on_clipboard(&self) -> bool {
+        // No wildcard: a new variant must decide this for itself.
+        match self {
+            InjectError::Clipboard(_) => false,
+            InjectError::KeyEvent | InjectError::Synthesis(_) => true,
+        }
+    }
+}
+
 /// Put `text` on the clipboard only (fallback mode — no permissions needed).
 pub fn copy_to_clipboard(text: &str) -> Result<(), InjectError> {
     let mut cb = arboard::Clipboard::new().map_err(|e| InjectError::Clipboard(e.to_string()))?;
@@ -47,7 +60,8 @@ impl Clipboard for arboard::Clipboard {
 /// Inject `text` at the cursor of the frontmost app via clipboard + the OS
 /// paste chord, restoring whatever text was on the clipboard before. If the
 /// paste keystroke fails, `text` is left on the clipboard so the user can
-/// paste it by hand.
+/// paste it by hand. `InjectError::Clipboard` means `text` never reached the
+/// clipboard.
 pub fn inject(text: &str) -> Result<(), InjectError> {
     let mut cb = arboard::Clipboard::new().map_err(|e| InjectError::Clipboard(e.to_string()))?;
     inject_with(&mut cb, crate::platform::injector(), text)
@@ -187,5 +201,41 @@ mod tests {
         let r = inject_with(&mut cb, &FakeInjector { paste_ok: false }, "new");
         assert!(matches!(r, Err(InjectError::Synthesis(_))));
         assert_eq!(cb.0.as_deref(), Some("new"));
+    }
+
+    /// A clipboard that can be read but refuses every write.
+    struct ReadOnlyClipboard(Option<String>);
+
+    impl Clipboard for ReadOnlyClipboard {
+        fn get_text(&mut self) -> Option<String> {
+            self.0.clone()
+        }
+        fn set_text(&mut self, _: &str) -> Result<(), InjectError> {
+            Err(InjectError::Clipboard("busy".into()))
+        }
+    }
+
+    #[test]
+    fn a_clipboard_error_means_the_text_never_got_there() {
+        let mut cb = ReadOnlyClipboard(Some("old".into()));
+        let r = inject_with(&mut cb, &FakeInjector { paste_ok: true }, "new");
+        assert!(matches!(r, Err(InjectError::Clipboard(_))));
+        assert_eq!(cb.0.as_deref(), Some("old"));
+    }
+
+    #[test]
+    fn only_a_failed_keystroke_leaves_the_text_on_the_clipboard() {
+        let mut cb = FakeClipboard(Some("old".into()));
+        let pasted = inject_with(&mut cb, &FakeInjector { paste_ok: false }, "new");
+        assert!(pasted.unwrap_err().left_text_on_clipboard());
+        assert_eq!(cb.0.as_deref(), Some("new"));
+
+        let mut cb = ReadOnlyClipboard(Some("old".into()));
+        let copied = inject_with(&mut cb, &FakeInjector { paste_ok: true }, "new");
+        assert!(!copied.unwrap_err().left_text_on_clipboard());
+        assert_eq!(cb.0.as_deref(), Some("old"));
+
+        // macOS's keystroke failure, which the fake injector doesn't raise.
+        assert!(InjectError::KeyEvent.left_text_on_clipboard());
     }
 }

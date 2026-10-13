@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 /// How long a fresh server may take to load its model and answer `/health`.
 pub const HEALTH_TIMEOUT: Duration = Duration::from_secs(30);
 const HEALTH_POLL: Duration = Duration::from_millis(100);
-/// Name of the server binary, also how a stale PID is recognised as ours.
+/// Name of the server binary.
 const SERVER_NAME: &str = "llama-server";
 
 /// The bundled `llama-server` under the app's resource dir.
@@ -327,11 +327,14 @@ pub fn loopback_client(timeout: Duration) -> io::Result<reqwest::blocking::Clien
         .map_err(io::Error::other)
 }
 
-/// Kill a `llama-server` left running by a previous Purl that crashed, then
-/// remove its PID file. A PID that now belongs to some other program is
-/// left alone.
+/// Kill the `llama-server` at `bin` left running by a previous Purl that
+/// crashed, then remove its PID file. A PID that now belongs to some other
+/// program, including another llama.cpp server the user runs, is left alone.
+/// So is a leftover from a bundle since moved or translocated: its path no
+/// longer matches, and it is not reaped (fails safe). The PID file is still
+/// deleted, so that orphan is never cleaned up on a later launch either.
 #[cfg(unix)]
-pub fn reap_stale(pid_file: &Path) {
+pub fn reap_stale(pid_file: &Path, bin: &Path) {
     let Some(pid) = std::fs::read_to_string(pid_file)
         .ok()
         .and_then(|s| s.trim().parse::<u32>().ok())
@@ -339,20 +342,34 @@ pub fn reap_stale(pid_file: &Path) {
         let _ = std::fs::remove_file(pid_file);
         return;
     };
-    let command = Command::new("ps")
+    // Absolute paths so a PATH entry can't stand in for either tool.
+    let command = Command::new("/bin/ps")
         .args(["-p", &pid.to_string(), "-o", "command="])
         .output()
         .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
         .unwrap_or_default();
-    if command.contains(SERVER_NAME) {
-        let _ = Command::new("kill").arg(pid.to_string()).status();
+    if runs_binary(&command, bin) {
+        let _ = Command::new("/bin/kill").arg(pid.to_string()).status();
     }
     let _ = std::fs::remove_file(pid_file);
 }
 
+/// True when the `ps` command line `command` runs exactly `bin`: its full
+/// path, then nothing or arguments. A relative `bin` never matches.
+#[cfg(unix)]
+fn runs_binary(command: &str, bin: &Path) -> bool {
+    if !bin.is_absolute() {
+        return false;
+    }
+    command
+        .trim_end()
+        .strip_prefix(&*bin.to_string_lossy())
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with(' '))
+}
+
 /// Windows ties the server to a kill-on-close Job Object instead.
 #[cfg(not(unix))]
-pub fn reap_stale(_pid_file: &Path) {}
+pub fn reap_stale(_pid_file: &Path, _bin: &Path) {}
 
 #[cfg(windows)]
 mod job {
@@ -622,7 +639,7 @@ mod tests {
         let pid_file = dir.path().join("llama.pid");
         let mut other = Command::new("sleep").arg("30").spawn().unwrap();
         std::fs::write(&pid_file, other.id().to_string()).unwrap();
-        reap_stale(&pid_file);
+        reap_stale(&pid_file, &dir.path().join("llama/llama-server"));
         assert!(!pid_file.exists());
         assert!(
             matches!(other.try_wait(), Ok(None)),
@@ -630,6 +647,73 @@ mod tests {
         );
         other.kill().unwrap();
         other.wait().unwrap();
+    }
+
+    /// A stand-in `llama-server`: `sleep` linked under that name in `dir`,
+    /// so `ps` shows it run from `dir/llama-server`.
+    #[cfg(unix)]
+    fn fake_llama_server(dir: &Path) -> (PathBuf, std::process::Child) {
+        let bin = dir.join(SERVER_NAME);
+        std::os::unix::fs::symlink("/bin/sleep", &bin).unwrap();
+        let child = Command::new(&bin).arg("30").spawn().unwrap();
+        (bin, child)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reap_kills_our_leftover_server() {
+        let dir = tempfile::tempdir().unwrap();
+        let pid_file = dir.path().join("llama.pid");
+        let (bin, mut leftover) = fake_llama_server(dir.path());
+        std::fs::write(&pid_file, leftover.id().to_string()).unwrap();
+        reap_stale(&pid_file, &bin);
+        assert!(!pid_file.exists());
+        let t0 = Instant::now();
+        while matches!(leftover.try_wait(), Ok(None)) {
+            assert!(t0.elapsed() < Duration::from_secs(2), "leftover not killed");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    /// The user's own llama.cpp server (or an Ollama runner) can reuse a
+    /// stale PID; the name alone doesn't make it ours.
+    #[cfg(unix)]
+    #[test]
+    fn reap_leaves_another_llama_server_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let pid_file = dir.path().join("llama.pid");
+        let theirs = dir.path().join("homebrew");
+        std::fs::create_dir(&theirs).unwrap();
+        let (_, mut other) = fake_llama_server(&theirs);
+        std::fs::write(&pid_file, other.id().to_string()).unwrap();
+        reap_stale(&pid_file, &dir.path().join("llama/llama-server"));
+        assert!(!pid_file.exists());
+        assert!(
+            matches!(other.try_wait(), Ok(None)),
+            "someone else's llama-server isn't ours to kill"
+        );
+        other.kill().unwrap();
+        other.wait().unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn runs_binary_needs_the_full_path() {
+        let bin = Path::new("/Applications/Purl.app/Contents/Resources/llama/llama-server");
+        let ours = format!("{} --host 127.0.0.1 -m /m/q.gguf\n", bin.display());
+        assert!(runs_binary(&ours, bin));
+        assert!(runs_binary(&bin.to_string_lossy(), bin));
+        assert!(!runs_binary(
+            "/opt/homebrew/bin/llama-server -m x.gguf",
+            bin
+        ));
+        assert!(!runs_binary("llama-server -m x.gguf", bin));
+        assert!(!runs_binary(&format!("{}-old -m x", bin.display()), bin));
+        assert!(!runs_binary("", bin));
+        assert!(!runs_binary(
+            "llama/llama-server -m x",
+            Path::new("llama/llama-server")
+        ));
     }
 
     #[cfg(unix)]

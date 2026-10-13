@@ -46,7 +46,7 @@ test("happy path: welcome → permissions → download → try it → finish", a
   await primary(page).click();
 
   await expect(panel(page)).toHaveAttribute("data-step", "try");
-  await expect(panel(page)).toContainText("Press ⌘⇧Space and say something");
+  await expect(panel(page)).toContainText("Hold ⌘⇧Space and say something. Let go to paste.");
   await page.evaluate(() => window.__purlMock!.dictate("Testing Purl, one two three."));
   await expect(panel(page).locator(".onb-try")).toHaveValue("Testing Purl, one two three.");
   await primary(page).click(); // Finish
@@ -136,7 +136,7 @@ test("Windows: no Accessibility row or field-reading text, Ctrl hotkey, nothing 
   await primary(page).click();
   await expect(panel(page).locator(".model-card")).toHaveAttribute("data-state", "ready");
   await primary(page).click();
-  await expect(panel(page)).toContainText("Press Ctrl+Shift+Space and say something");
+  await expect(panel(page)).toContainText("Hold Ctrl+Shift+Space and say something. Let go to paste.");
   await primary(page).click(); // Finish
   await expect(panel(page)).toBeHidden();
   expect(await lastSaved(page)).toMatchObject({ onboarding_complete: true, field_reading_disclosed: false });
