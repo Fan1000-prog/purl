@@ -25,7 +25,11 @@ impl InjectError {
     /// the user can paste it by hand. A clipboard error means it never got
     /// there.
     pub fn left_text_on_clipboard(&self) -> bool {
-        !matches!(self, InjectError::Clipboard(_))
+        // No wildcard: a new variant must decide this for itself.
+        match self {
+            InjectError::Clipboard(_) => false,
+            InjectError::KeyEvent | InjectError::Synthesis(_) => true,
+        }
     }
 }
 
@@ -230,5 +234,8 @@ mod tests {
         let copied = inject_with(&mut cb, &FakeInjector { paste_ok: true }, "new");
         assert!(!copied.unwrap_err().left_text_on_clipboard());
         assert_eq!(cb.0.as_deref(), Some("old"));
+
+        // macOS's keystroke failure, which the fake injector doesn't raise.
+        assert!(InjectError::KeyEvent.left_text_on_clipboard());
     }
 }
