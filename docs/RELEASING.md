@@ -143,9 +143,10 @@ Then move `purl-signing.p12` off the Desktop and into your password manager.
 
 0. **Before the first release candidate**, start a manual run from `main`
    (**Actions → release → Run workflow**) and wait for both jobs to pass.
-   It builds and installs the real Windows installer with
-   `onnxruntime.dll` and `llama-server`, and signs the macOS app the way a
-   release does, without publishing anything.
+   It builds and installs the real Windows installer and signs the macOS
+   app the way a release does. On both it checks the bundled `llama-server`
+   is in place and starts (and on Windows that `onnxruntime.dll` is there),
+   without publishing anything.
 1. Set the new version in all three places, on a branch, and merge it:
    `app/src-tauri/tauri.conf.json`, `app/src-tauri/Cargo.toml`,
    `app/package.json`. The tag must match `tauri.conf.json` (a `-rc.N`
@@ -200,9 +201,20 @@ After the first open, both systems remember the choice.
 `purl --smoke` (see `app/src-tauri/src/smoke.rs`) starts the installed app
 headless, loads settings, the dictionary and the platform layer without
 models, writes `SMOKE OK <version> ...` to `<temp>/purl-smoke.log` and exits.
-On Windows the job installs silently (`/S`), runs it, checks
-`onnxruntime.dll` sits beside `purl.exe`, and uninstalls. On macOS it runs from the mounted DMG and checks the signature
-is "Purl Self-Signed".
+
+- **Windows:** the job installs silently (`/S`), checks `onnxruntime.dll`
+  sits beside `purl.exe` and `llama\llama-server.exe` is installed, runs
+  `llama-server --version` and `purl --smoke`, then uninstalls.
+- **macOS:** the job mounts the DMG, checks the signature is "Purl
+  Self-Signed", runs `Purl.app/Contents/Resources/llama/llama-server
+  --version` and then `purl --smoke` from the mounted app.
+
+`llama-server --version` proves Smart cleanup's server is bundled and can
+start: a missing file, a missing linked library or an unsigned macOS binary
+fails it. It loads no model, and libraries loaded at run time rather than
+linked (the Windows `ggml-cpu-*.dll` variants) may go unchecked. The CI DMG
+is never downloaded, so it carries no quarantine flag and Gatekeeper's
+first-open check isn't exercised; step 4 covers that.
 
 It does not prove dictation works: no microphone, no model, no paste into a
 real app. That needs a person on real hardware.
