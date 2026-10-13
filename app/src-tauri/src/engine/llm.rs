@@ -269,15 +269,30 @@ impl LlamaServerEngine {
         self.notify();
     }
 
-    /// Stop the server so its model file can be deleted. False while it is
-    /// starting or answering a request. The check and the stop share one
-    /// lock, so a dictation can't take the server in between.
-    pub fn release(&self) -> bool {
-        self.stop_when(|slot| match &slot.phase {
-            Phase::Starting => false,
-            Phase::Running(s) => Arc::strong_count(s) == 1,
-            _ => true,
-        })
+    /// Stop the server and run `remove`, which deletes its model file, all
+    /// under the engine's lock: a dictation can neither take the server
+    /// mid-check nor start one on a half-deleted file (and fail). `None`,
+    /// without running `remove`, while it is starting or answering a request.
+    pub fn release_and<R>(&self, remove: impl FnOnce() -> R) -> Option<R> {
+        let removed = {
+            let mut slot = self.slot.lock().unwrap();
+            let idle = match &slot.phase {
+                Phase::Starting => false,
+                Phase::Running(s) => Arc::strong_count(s) == 1,
+                _ => true,
+            };
+            if !idle {
+                return None;
+            }
+            slot.generation += 1;
+            // Killed under the lock, unlike `stop_when`: Windows can't delete
+            // a file the server still holds open.
+            drop(std::mem::replace(&mut slot.phase, Phase::Stopped));
+            remove()
+        };
+        self.started.notify_all();
+        self.notify();
+        Some(removed)
     }
 
     /// Stop the server now, whatever it is doing. For app exit.
@@ -285,16 +300,12 @@ impl LlamaServerEngine {
         self.stop_when(|_| true);
     }
 
-    /// Stop (and forget any failure) when `should` says so. True when the
-    /// server is stopped afterwards, including when it already was.
-    fn stop_when(&self, should: impl FnOnce(&Slot) -> bool) -> bool {
+    /// Stop (and forget any failure) when `should` says so.
+    fn stop_when(&self, should: impl FnOnce(&Slot) -> bool) {
         let old = {
             let mut slot = self.slot.lock().unwrap();
-            if matches!(slot.phase, Phase::Stopped) {
-                return true;
-            }
-            if !should(&slot) {
-                return false;
+            if matches!(slot.phase, Phase::Stopped) || !should(&slot) {
+                return;
             }
             slot.generation += 1;
             std::mem::replace(&mut slot.phase, Phase::Stopped)
@@ -303,7 +314,6 @@ impl LlamaServerEngine {
         drop(old);
         self.started.notify_all();
         self.notify();
-        true
     }
 
     /// Stopped/Failed + installed → Starting. Returns what to start when
@@ -645,7 +655,7 @@ pub(crate) mod tests {
     fn release_and_shutdown_stop_the_server() {
         let h = harness(0, false, "Hello.", false);
         h.engine.complete("s", "u", BUDGET).unwrap();
-        assert!(h.engine.release());
+        assert!(h.engine.release_and(|| ()).is_some());
         assert!(h.dropped.load(Ordering::SeqCst));
         h.engine.complete("s", "u", BUDGET).unwrap();
         h.engine.shutdown();
@@ -658,13 +668,47 @@ pub(crate) mod tests {
         h.engine.complete("s", "u", BUDGET).unwrap();
         // A dictation holds the server, as `complete` does mid-request.
         let in_flight = h.engine.acquire(Instant::now() + BUDGET).unwrap();
-        assert!(!h.engine.release(), "released mid-request");
+        assert!(
+            !h.engine.release_and(|| ()).is_some(),
+            "released mid-request"
+        );
         assert!(!h.dropped.load(Ordering::SeqCst));
         assert_eq!(h.engine.status(), EngineState::Ready);
         drop(in_flight);
-        assert!(h.engine.release());
+        assert!(h.engine.release_and(|| ()).is_some());
         assert!(h.dropped.load(Ordering::SeqCst));
-        assert!(h.engine.release(), "already stopped counts as released");
+        assert!(
+            h.engine.release_and(|| ()).is_some(),
+            "already stopped counts as released"
+        );
+    }
+
+    /// A start asked for while the files are being deleted waits, then finds
+    /// the model gone: Missing, never a failed start on half-deleted files.
+    #[test]
+    fn nothing_starts_while_the_model_is_deleted() {
+        let installed = Arc::new(AtomicBool::new(true));
+        let launches = Arc::new(AtomicUsize::new(0));
+        let (i, l) = (installed.clone(), launches.clone());
+        let engine = LlamaServerEngine::with_backend(
+            PathBuf::from("/m/qwen.gguf"),
+            Box::new(move |_: &Path| i.load(Ordering::SeqCst)),
+            Box::new(move |_: &Path| {
+                l.fetch_add(1, Ordering::SeqCst);
+                Err("the model file is half gone".into())
+            }),
+        );
+        let e = engine.clone();
+        let removed = engine.release_and(|| {
+            let dictation = std::thread::spawn(move || e.warm());
+            std::thread::sleep(Duration::from_millis(100));
+            installed.store(false, Ordering::SeqCst);
+            dictation
+        });
+        removed.unwrap().join().unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+        assert_eq!(launches.load(Ordering::SeqCst), 0);
+        assert_eq!(engine.status(), EngineState::Missing);
     }
 
     #[test]
@@ -672,7 +716,7 @@ pub(crate) mod tests {
         let h = harness(300, false, "Hello.", false);
         h.engine.warm();
         assert_eq!(h.engine.status(), EngineState::Loading);
-        assert!(!h.engine.release());
+        assert!(!h.engine.release_and(|| ()).is_some());
         assert_eq!(h.engine.status(), EngineState::Loading);
     }
 
@@ -681,7 +725,7 @@ pub(crate) mod tests {
         let h = harness(0, true, "", false);
         let _ = h.engine.complete("s", "u", BUDGET);
         assert!(matches!(h.engine.status(), EngineState::Failed { .. }));
-        assert!(h.engine.release());
+        assert!(h.engine.release_and(|| ()).is_some());
         assert_eq!(h.engine.status(), EngineState::Idle);
     }
 

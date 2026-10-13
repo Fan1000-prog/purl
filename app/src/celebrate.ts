@@ -25,9 +25,8 @@ export interface ConfettiOptions {
 }
 
 /** A burst of falling confetti pieces appended to `container`, self-removing
- *  once the animation finishes. Exported so the overlay's small pill window
- *  (its own document, its own palette) can reuse the same mechanic. */
-export function burstConfetti(container: HTMLElement, opts: ConfettiOptions = {}) {
+ *  once the animation finishes. */
+function burstConfetti(container: HTMLElement, opts: ConfettiOptions = {}) {
   if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
   const colors = opts.colors ?? COLORS;
   const pieceCount = opts.pieceCount ?? 26;

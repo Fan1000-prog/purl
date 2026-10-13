@@ -19,5 +19,3 @@ Dark is Purl's primary surface, so the app icon is the deep variant.
   npx tauri icon src-tauri/icons/source/purl-icon-macos.png -o /tmp/purl-icns
   cp /tmp/purl-icns/icon.icns src-tauri/icons/icon.icns
   ```
-
-- `purl-icon-colour.svg`: the previous fern-field icon, no longer used.

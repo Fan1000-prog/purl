@@ -57,14 +57,26 @@ function currentView(): View {
   return appState === "idle" && flash ? flash : appState;
 }
 
+// The view and label the pill last showed. Setting the pill rewrites its
+// live region, which makes a screen reader say it again, so a render that
+// changes neither (a repeat state event, an engine-status update) skips it.
+let shown = "";
+
 function render() {
   const view = currentView();
   document.body.dataset.view = view;
   document.body.dataset.app = appState;
-  if (view === "error") pill.error(ERROR_TEXT);
-  else if (view === "celebrate") pill.set("sent", caption);
-  else if (view === "processing" && warming) pill.set("polishing", WARMING_TEXT);
-  else pill.set(PILL_STATE[view]);
+  const label =
+    view === "error" ? ERROR_TEXT
+    : view === "celebrate" ? caption
+    : view === "processing" && warming ? WARMING_TEXT
+    : undefined;
+  const next = `${view}\n${label ?? ""}`;
+  if (next !== shown) {
+    shown = next;
+    if (view === "error") pill.error(ERROR_TEXT);
+    else pill.set(PILL_STATE[view], label);
+  }
   requestAnimationFrame(reportHitRect);
 }
 
@@ -82,12 +94,15 @@ function showFlash(kind: Flash, ms: number) {
 // other apps' controls. Rust keeps it click-through and only lets clicks land
 // inside the bounds reported here, so the empty space around the pill never
 // swallows a click meant for the app underneath. While processing the pill
-// isn't interactive, so it reports nothing.
+// isn't interactive, so it reports nothing. Only a changed rect is sent.
+let lastHitRect = "";
 function reportHitRect() {
   const r = appState === "processing" ? null : control.getBoundingClientRect();
-  void invoke("set_overlay_hit_rect", {
-    rect: r ? [r.left, r.top, r.width, r.height] : null,
-  });
+  const rect = r ? [r.left, r.top, r.width, r.height] : null;
+  const key = JSON.stringify(rect);
+  if (key === lastHitRect) return;
+  lastHitRect = key;
+  void invoke("set_overlay_hit_rect", { rect });
 }
 window.addEventListener("resize", reportHitRect);
 // The pill also changes size on its own: the capsule morphs between states,

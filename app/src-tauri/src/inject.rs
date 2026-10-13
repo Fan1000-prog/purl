@@ -47,7 +47,8 @@ impl Clipboard for arboard::Clipboard {
 /// Inject `text` at the cursor of the frontmost app via clipboard + the OS
 /// paste chord, restoring whatever text was on the clipboard before. If the
 /// paste keystroke fails, `text` is left on the clipboard so the user can
-/// paste it by hand.
+/// paste it by hand. `InjectError::Clipboard` means `text` never reached the
+/// clipboard.
 pub fn inject(text: &str) -> Result<(), InjectError> {
     let mut cb = arboard::Clipboard::new().map_err(|e| InjectError::Clipboard(e.to_string()))?;
     inject_with(&mut cb, crate::platform::injector(), text)
@@ -187,5 +188,25 @@ mod tests {
         let r = inject_with(&mut cb, &FakeInjector { paste_ok: false }, "new");
         assert!(matches!(r, Err(InjectError::Synthesis(_))));
         assert_eq!(cb.0.as_deref(), Some("new"));
+    }
+
+    /// A clipboard that can be read but refuses every write.
+    struct ReadOnlyClipboard(Option<String>);
+
+    impl Clipboard for ReadOnlyClipboard {
+        fn get_text(&mut self) -> Option<String> {
+            self.0.clone()
+        }
+        fn set_text(&mut self, _: &str) -> Result<(), InjectError> {
+            Err(InjectError::Clipboard("busy".into()))
+        }
+    }
+
+    #[test]
+    fn a_clipboard_error_means_the_text_never_got_there() {
+        let mut cb = ReadOnlyClipboard(Some("old".into()));
+        let r = inject_with(&mut cb, &FakeInjector { paste_ok: true }, "new");
+        assert!(matches!(r, Err(InjectError::Clipboard(_))));
+        assert_eq!(cb.0.as_deref(), Some("old"));
     }
 }
