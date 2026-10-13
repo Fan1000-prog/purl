@@ -247,3 +247,8 @@ test("a hit rect Rust didn't take is sent again", async ({ page }) => {
   await emit(page, "state", "idle");
   await expect.poll(sent).toBe(before + 1);
 });
+
+test("the pill's tooltip says hold to talk", async ({ page }) => {
+  await open(page);
+  await expect(page.locator("#pill")).toHaveAttribute("title", "Hold your dictation hotkey and talk");
+});
