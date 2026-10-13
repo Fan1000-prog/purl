@@ -89,13 +89,21 @@ through ONNX Runtime, as in the app.
 
 - macOS, Apple M1 Pro (10 cores, 16 GB): [`results/2026-10-10-apple-m1-pro.json`](results/2026-10-10-apple-m1-pro.json).
   The machine got busy during that run (load 2.9 at start, 40.6 at the end).
-  Parakeet and whisper-Metal speeds matched two other runs within a few
-  percent; whisper CPU-only, measured last, ranged from 0.18 to 0.36 mean RTF
-  across runs, so read that row as rough.
+  whisper CPU-only, measured last, had a mean RTF of 0.18 on dictation_10
+  and 0.36 on LibriSpeech, so read that row as rough.
 - macOS, Apple M1 Pro, again: [`results/2026-10-12-apple-m1-pro.json`](results/2026-10-12-apple-m1-pro.json),
   the first run with Smart cleanup. Load was 18 at start and 26 at the end,
   mostly Spotlight indexing (CPU use stayed low). WER is identical to the
   earlier run. Speeds moved: Parakeet mean RTF up 3-4%, whisper-Metal up
   to 10%, Parakeet cold load 828 → 1,101 ms, and whisper CPU-only again
   noisy (0.31 mean RTF on dictation_10, was 0.18).
+- Both runs above predate a Parakeet decoder fix
+  ([PR #22](https://github.com/Fan1000-prog/purl/pull/22)): the decoder
+  ignored the TDT duration head and wrote "Francis X X X X X X X X X Xavier"
+  on 3 LibriSpeech clips. Re-scored after the fix, on the same machine on
+  2026-10-12: LibriSpeech 3.20% → 2.17% (75 → 51 of 2,346 words),
+  dictation_10 unchanged at 0.81%. That run crashed in the whisper CPU-only
+  pass, so there's no JSON and no new speed numbers; its per-clip
+  transcripts are in
+  [`results/2026-10-12-apple-m1-pro-tdt-fix/`](results/2026-10-12-apple-m1-pro-tdt-fix/).
 - Windows numbers: not measured yet.

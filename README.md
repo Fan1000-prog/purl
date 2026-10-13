@@ -105,15 +105,24 @@ Details: [docs/PRIVACY.md](docs/PRIVACY.md).
 
 Measured on an **Apple M1 Pro** (10 cores, 16 GB, macOS 26.4.1) on
 2026-10-12, Purl commit `4627208`. The machine was busy during the run
-(load average 18 to 26), so the speed numbers are on the slow side. Windows:
-not measured yet.
+(load average 18 to 26), so the speed numbers are on the slow side. That
+run was before the decoder fix below; Parakeet's accuracy was re-scored
+after it, but speed and cleanup times weren't re-measured. Windows: not
+measured yet.
 
 **Accuracy** (word error rate, lower is better):
 
 | Test set | Parakeet v3 (Purl) | whisper.cpp base.en (old engine) |
 |---|---|---|
-| LibriSpeech test-clean, 100 clips, 15 min | 3.2% <!-- update after the TDT fix --> | 2.9% |
+| LibriSpeech test-clean, 100 clips, 15 min | 2.2% | 2.9% |
 | 10 dictation clips, synthetic (read by macOS `say`) | 0.8% | 1.6% |
+
+Parakeet's numbers here are after the decoder fix in [PR #22](https://github.com/Fan1000-prog/purl/pull/22) (it stopped
+Parakeet repeating a word, as in "Francis X X X … Xavier"). They were scored
+on 2026-10-12 on the same Mac with the benchmark's own scoring code:
+51 of 2,346 words wrong on LibriSpeech, down from 75 (3.2%) before the fix; the
+dictation clips came out the same. Per-clip transcripts:
+[`bench/results/2026-10-12-apple-m1-pro-tdt-fix/`](bench/results/2026-10-12-apple-m1-pro-tdt-fix/).
 
 The dictation clips are synthetic: a computer voice read them, so they're
 cleaner than real speech. Treat them as a check that everyday office words
