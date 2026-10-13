@@ -98,6 +98,14 @@ function wanted(name, target) {
   );
 }
 
+/** bsdtar, which reads both .tar.gz and .zip and ships with macOS and
+ *  Windows 10+. On Windows it is named by full path: under Git Bash a plain
+ *  "tar" is GNU tar, which reads `C:\...` as host:path and can't open a zip. */
+export function tarCommand(platform = process.platform, env = process.env) {
+  if (platform !== "win32") return "tar";
+  return path.win32.join(env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe");
+}
+
 async function main() {
   const target = process.env.PURL_TARGET || hostTarget();
   const archive = ARCHIVES[target];
@@ -126,8 +134,7 @@ async function main() {
 
     const extracted = path.join(work, "x");
     fs.mkdirSync(extracted);
-    // bsdtar reads both .tar.gz and .zip, and ships with macOS and Windows 10+.
-    const tar = spawnSync("tar", ["-xf", file, "-C", extracted], { stdio: "inherit" });
+    const tar = spawnSync(tarCommand(), ["-xf", file, "-C", extracted], { stdio: "inherit" });
     if (tar.status !== 0) throw new Error(`tar failed to extract ${archive.name}`);
 
     const top = fs.readdirSync(extracted);
@@ -155,7 +162,9 @@ async function main() {
   }
 }
 
-main().catch((e) => {
-  console.error(`fetch-llama: ${e.message}`);
-  process.exit(1);
-});
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  main().catch((e) => {
+    console.error(`fetch-llama: ${e.message}`);
+    process.exit(1);
+  });
+}
