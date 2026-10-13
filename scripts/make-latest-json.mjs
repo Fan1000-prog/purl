@@ -7,8 +7,8 @@
 // platform's updater file must have its "<file>.sig" beside it.
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { TARGETS, appVersion } from "./release-assets.mjs";
+import { isMain } from "./is-main.mjs";
 
 /**
  * The manifest tauri-plugin-updater reads. `signatures` maps an updater
@@ -56,7 +56,7 @@ function main(args) {
   console.log(JSON.stringify(manifest, null, 2));
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (isMain(import.meta.url)) {
   try {
     main(process.argv.slice(2));
   } catch (e) {
