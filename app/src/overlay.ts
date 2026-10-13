@@ -1,5 +1,5 @@
 // Persistent voice pill: the brand dictation pill (src/brand/components),
-// driven by the app's events. Idle shows "Press <hotkey>" (click to start
+// driven by the app's events. Idle shows "Hold <hotkey>" (click to start
 // dictating); recording shows the live waveform and timer from "audio-level"
 // events, with ✕ cancel and ✓ finish-and-transcribe beside it; processing is
 // "Polishing" ("Warming up…" while the speech model loads); a finished
@@ -40,7 +40,7 @@ const control = document.getElementById("pill")!;
 const fillEl = document.getElementById("countdown-fill")!;
 const pill = mountPill(document.getElementById("capsule")!, {
   hotkey: pillHotkey(DEFAULT_HOTKEY),
-  idleLabel: "Press",
+  idleLabel: "Hold",
 });
 
 // What Rust last said, and a short-lived flash (done / error / caption) that

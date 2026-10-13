@@ -50,7 +50,7 @@ async function capture(page: Page, name: string) {
 }
 
 const STATES = [
-  { name: "idle", drive: async (_: Page) => {}, pill: "idle", label: "Press ⌘ ⇧ Space" },
+  { name: "idle", drive: async (_: Page) => {}, pill: "idle", label: "Hold ⌘ ⇧ Space" },
   { name: "listening", drive: (p: Page) => emit(p, "state", "recording"), pill: "listening", label: "00:00" },
   { name: "polishing", drive: (p: Page) => emit(p, "state", "processing"), pill: "polishing", label: "Polishing" },
   { name: "sent", drive: (p: Page) => emit(p, "result", { cleaned: "hi" }), pill: "sent", label: "Sent clean" },
@@ -74,14 +74,14 @@ test("idle shows the real hotkey from settings, and follows a change", async ({ 
     (window as any).__results = { get_status: { hotkey: "Alt+Space", state: "idle" } };
   });
   await open(page);
-  await expect.poll(() => label(page)).toBe("Press ⌥ Space");
+  await expect.poll(() => label(page)).toBe("Hold ⌥ Space");
   await emit(page, "hotkey-changed", "CmdOrCtrl+Shift+D");
-  await expect.poll(() => label(page)).toBe("Press ⌘ ⇧ D");
+  await expect.poll(() => label(page)).toBe("Hold ⌘ ⇧ D");
 });
 
 test("Windows spells the hotkey out", async ({ page }) => {
   await open(page, "windows");
-  await expect.poll(() => label(page)).toBe("Press Ctrl Shift Space");
+  await expect.poll(() => label(page)).toBe("Hold Ctrl Shift Space");
 });
 
 test("mic level drives the waveform while recording", async ({ page }) => {
