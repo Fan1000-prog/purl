@@ -9,6 +9,7 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { isMain } from "./is-main.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const TAURI_DIR = join(ROOT, "app", "src-tauri");
@@ -87,7 +88,7 @@ function main(argv) {
   }
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (isMain(import.meta.url)) {
   try {
     main(process.argv.slice(2));
   } catch (e) {

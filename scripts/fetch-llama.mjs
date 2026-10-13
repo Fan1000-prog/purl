@@ -19,6 +19,7 @@ import https from "node:https";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isMain } from "./is-main.mjs";
 
 const TAG = "b11429";
 const ARCHIVES = {
@@ -162,7 +163,7 @@ async function main() {
   }
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (isMain(import.meta.url)) {
   main().catch((e) => {
     console.error(`fetch-llama: ${e.message}`);
     process.exit(1);
