@@ -95,7 +95,7 @@ through ONNX Runtime, as in the app.
   the first run with Smart cleanup. Load was 18 at start and 26 at the end,
   mostly Spotlight indexing (CPU use stayed low). WER is identical to the
   earlier run. Speeds moved: Parakeet mean RTF up 3-4%, whisper-Metal up
-  to 11%, Parakeet cold load 828 → 1,101 ms, and whisper CPU-only again
+  to 10%, Parakeet cold load 828 → 1,101 ms, and whisper CPU-only again
   noisy (0.31 mean RTF on dictation_10, was 0.18).
 - Both runs above predate a Parakeet decoder fix
   ([PR #22](https://github.com/Fan1000-prog/purl/pull/22)): the decoder

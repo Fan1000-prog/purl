@@ -5,10 +5,10 @@ decoder use Parakeet's TDT duration head. Columns: `file`, `reference`,
 `hypothesis`.
 
 - `after/`: written by `cargo run --release --example bench` on 2026-10-12,
-  Apple M1 Pro, at the benchmark branch (`7c94447`) with PR #22's
-  transcribe-rs patch. That run crashed later, in the whisper CPU-only
-  pass (a whisper-cli timeout, machine load about 144), so it wrote no
-  results JSON and its speed numbers aren't reported anywhere.
+  Apple M1 Pro, at commit `7c94447` with PR #22's transcribe-rs patch.
+  That run crashed later, in the whisper CPU-only pass (a whisper-cli
+  timeout), so it wrote no results JSON and its speed numbers aren't
+  reported anywhere.
 - `before/`: the cached Parakeet transcripts from before the fix. They score
   exactly what [`../2026-10-12-apple-m1-pro.json`](../2026-10-12-apple-m1-pro.json)
   reports.

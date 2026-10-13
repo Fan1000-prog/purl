@@ -118,9 +118,9 @@ measured yet.
 | 10 dictation clips, synthetic (read by macOS `say`) | 0.8% | 1.6% |
 
 Parakeet's numbers here are after the decoder fix in [PR #22](https://github.com/Fan1000-prog/purl/pull/22) (it stopped
-Parakeet repeating a word, as in "Francis X X X Xavier"). They were scored
+Parakeet repeating a word, as in "Francis X X X … Xavier"). They were scored
 on 2026-10-12 on the same Mac with the benchmark's own scoring code:
-51 of 2,346 words wrong on LibriSpeech, down from 3.2% before the fix; the
+51 of 2,346 words wrong on LibriSpeech, down from 75 (3.2%) before the fix; the
 dictation clips came out the same. Per-clip transcripts:
 [`bench/results/2026-10-12-apple-m1-pro-tdt-fix/`](bench/results/2026-10-12-apple-m1-pro-tdt-fix/).
 

@@ -135,12 +135,12 @@ scoring code, Parakeet gets 51 of 2,346 words wrong (2.2%), against 67 for
 whisper base.en (2.9%). The dictation clips came out the same.
 Per-clip transcripts: [`bench/results/2026-10-12-apple-m1-pro-tdt-fix/`](../bench/results/2026-10-12-apple-m1-pro-tdt-fix/).
 
-Honest reading: Parakeet is now more accurate on both sets. With a GPU,
-the old engine is still faster. The Parakeet model also supports 25
+Honest reading: Parakeet is now more accurate on both sets. In the speed
+run (before the fix), the old engine was faster with a GPU. The Parakeet model also supports 25
 European languages, where base.en is English only. Purl has only been
 measured in English so far.
 
-Cleanup on the same dictation transcripts:
+Cleanup on the same dictation transcripts (measured before the fix):
 
 | | Mean | p95 |
 |---|---|---|
