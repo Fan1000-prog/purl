@@ -210,10 +210,11 @@ models, writes `SMOKE OK <version> ...` to `<temp>/purl-smoke.log` and exits.
   --version` and then `purl --smoke` from the mounted app.
 
 `llama-server --version` proves Smart cleanup's server is bundled and can
-start: a missing file, a missing library or an unsigned macOS binary fails
-it. It loads no model. The CI DMG is never downloaded, so it carries no
-quarantine flag and Gatekeeper's first-open check isn't exercised; step 4
-covers that.
+start: a missing file, a missing linked library or an unsigned macOS binary
+fails it. It loads no model, and libraries loaded at run time rather than
+linked (the Windows `ggml-cpu-*.dll` variants) may go unchecked. The CI DMG
+is never downloaded, so it carries no quarantine flag and Gatekeeper's
+first-open check isn't exercised; step 4 covers that.
 
 It does not prove dictation works: no microphone, no model, no paste into a
 real app. That needs a person on real hardware.

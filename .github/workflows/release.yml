@@ -121,7 +121,7 @@ jobs:
           codesign --verify --deep --strict "$app"
           codesign -dvv "$app" 2>&1 | grep -F "Authority=Purl Self-Signed"
           # Smart cleanup's bundled server must be there and start: an
-          # unsigned Mach-O or a missing dylib kills it before it prints.
+          # unsigned Mach-O or a missing linked dylib kills it before it prints.
           llama="$app/Contents/Resources/llama/llama-server"
           if [[ ! -x "$llama" ]]; then
             echo "::error::llama-server is missing from Purl.app/Contents/Resources/llama"
@@ -149,12 +149,18 @@ jobs:
           # Speech links ONNX Runtime dynamically; its DLL must sit beside purl.exe.
           if (-not (Test-Path (Join-Path $dir 'onnxruntime.dll'))) { throw "onnxruntime.dll is not beside purl.exe" }
           # Smart cleanup's server is a bundled resource (llama\ beside
-          # purl.exe); it must be there and start, its DLLs included.
+          # purl.exe); it must be there and start, with the DLLs it links.
+          # (The ggml-cpu-*.dll variants are loaded at run time, not linked.)
           $llama = Join-Path $dir 'llama\llama-server.exe'
           if (-not (Test-Path $llama)) { throw "llama-server.exe not installed in $dir\llama; found: $(Get-ChildItem $dir -Recurse -Name)" }
-          $out = & $llama --version 2>&1
-          if ($LASTEXITCODE -ne 0) { throw "llama-server --version exited with ${LASTEXITCODE}: $out" }
-          Write-Host ($out -join "`n")
+          # It prints its version on stderr; don't let Stop turn that into an error.
+          $eap = $ErrorActionPreference
+          $ErrorActionPreference = 'Continue'
+          $out = & $llama --version 2>&1 | Out-String
+          $code = $LASTEXITCODE
+          $ErrorActionPreference = $eap
+          if ($code -ne 0) { throw "llama-server --version exited with ${code}: $out" }
+          Write-Host $out
 
           $log = Join-Path $env:TEMP 'purl-smoke.log'
           Remove-Item $log -ErrorAction SilentlyContinue
