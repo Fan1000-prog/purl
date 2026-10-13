@@ -235,3 +235,15 @@ test("the hit rect is sent only when it changes", async ({ page }) => {
   await expect.poll(() => lastHitRect(page)).toBeNull();
   expect(await sent()).toBe(before + 1);
 });
+
+test("a hit rect Rust didn't take is sent again", async ({ page }) => {
+  await page.addInitScript(() => ((window as any).__rejects = { set_overlay_hit_rect: true }));
+  await open(page);
+  await settle(page);
+  const sent = () =>
+    page.evaluate(() => (window as any).__invoked.filter((c: any) => c.cmd === "set_overlay_hit_rect").length);
+  const before = await sent();
+  await page.evaluate(() => ((window as any).__rejects = {}));
+  await emit(page, "state", "idle");
+  await expect.poll(sent).toBe(before + 1);
+});

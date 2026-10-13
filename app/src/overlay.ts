@@ -94,7 +94,8 @@ function showFlash(kind: Flash, ms: number) {
 // other apps' controls. Rust keeps it click-through and only lets clicks land
 // inside the bounds reported here, so the empty space around the pill never
 // swallows a click meant for the app underneath. While processing the pill
-// isn't interactive, so it reports nothing. Only a changed rect is sent.
+// isn't interactive, so it reports nothing. Only a changed rect is sent;
+// one Rust didn't take is sent again on the next report.
 let lastHitRect = "";
 function reportHitRect() {
   const r = appState === "processing" ? null : control.getBoundingClientRect();
@@ -102,7 +103,9 @@ function reportHitRect() {
   const key = JSON.stringify(rect);
   if (key === lastHitRect) return;
   lastHitRect = key;
-  void invoke("set_overlay_hit_rect", { rect });
+  invoke("set_overlay_hit_rect", { rect }).catch(() => {
+    if (lastHitRect === key) lastHitRect = "";
+  });
 }
 window.addEventListener("resize", reportHitRect);
 // The pill also changes size on its own: the capsule morphs between states,
