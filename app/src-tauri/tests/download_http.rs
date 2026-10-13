@@ -11,12 +11,12 @@ use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 const FIXTURE_LEN: usize = 1024 * 1024;
 const CUT_AT: usize = 400 * 1024;
-const OVERSIZED_COPIES: usize = 16;
-/// Bytes the `Oversized` reply got onto the wire. Only one test uses it.
-static OVERSIZED_SENT: AtomicUsize = AtomicUsize::new(0);
+/// How long the `Oversized` reply waits for the client to hang up.
+const OVERSIZED_HOLD: Duration = Duration::from_secs(10);
 
 /// What the server does with the next request. Unscripted requests get `Serve`.
 #[derive(Clone, Copy)]
@@ -25,8 +25,9 @@ enum Reply {
     Status(u16),
     /// Promise the full body, send this many bytes, then hang up.
     CloseAfter(usize),
-    /// Stream the file over and over, up to `OVERSIZED_COPIES` times, with no
-    /// Content-Length: a server serving far more than the registry says.
+    /// Send the file and 64 KiB more with no Content-Length, then keep the
+    /// connection open (up to `OVERSIZED_HOLD`) until the client hangs up:
+    /// a server serving more than the registry says.
     Oversized,
 }
 
@@ -119,14 +120,12 @@ fn serve(
     };
     if let Reply::Oversized = reply {
         let _ = write!(stream, "HTTP/1.1 200 OK\r\nConnection: close\r\n\r\n");
-        // Bounded so a client without a size cap fails the test instead of
-        // filling the disk. Stops early once the client hangs up.
-        for chunk in data.chunks(64 * 1024).cycle().take(OVERSIZED_COPIES * 16) {
-            if stream.write_all(chunk).is_err() {
-                break;
-            }
-            OVERSIZED_SENT.fetch_add(chunk.len(), Ordering::SeqCst);
-        }
+        let _ = stream.write_all(data);
+        let _ = stream.write_all(&data[..64 * 1024]);
+        // A client that stops at the registry size hangs up now; one that
+        // keeps reading waits here for more until the hold runs out.
+        let _ = stream.set_read_timeout(Some(OVERSIZED_HOLD));
+        let _ = std::io::Read::read(&mut stream, &mut [0u8; 1]);
         return;
     }
     let _ = write!(
@@ -281,19 +280,19 @@ fn body_longer_than_registry_size_is_cut_off() {
     fx.then(Reply::Oversized);
     let dir = app_data();
     let spec = spec(&fx.url, FIXTURE_LEN as u64, &fx.sha());
-    let mut most = 0;
+    let t0 = std::time::Instant::now();
 
-    let result = download_model(spec, &dir, &AtomicBool::new(false), &mut |p| {
-        most = most.max(p.downloaded)
-    });
+    let result = download_model(spec, &dir, &AtomicBool::new(false), &mut |_| {});
 
+    // The client gave up as soon as the body passed the registry size,
+    // rather than waiting for the server to finish. Checked on the client's
+    // side: how much the server got onto the wire depends on socket buffers,
+    // which on Windows can take the whole body before the hang-up.
     assert_eq!(result, Err(DownloadError::Checksum));
-    assert!(most <= FIXTURE_LEN as u64, "reported {most} bytes");
-    // The client hung up early instead of reading all 16 MiB.
-    let sent = OVERSIZED_SENT.load(Ordering::SeqCst);
     assert!(
-        sent < OVERSIZED_COPIES * FIXTURE_LEN,
-        "server sent {sent} bytes"
+        t0.elapsed() < OVERSIZED_HOLD / 2,
+        "kept reading past the registry size ({:?})",
+        t0.elapsed()
     );
     assert!(!file_in(&dir, "f.bin.part").exists());
     assert!(!file_in(&dir, "f.bin").exists());

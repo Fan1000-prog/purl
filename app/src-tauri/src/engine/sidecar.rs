@@ -330,6 +330,8 @@ pub fn loopback_client(timeout: Duration) -> io::Result<reqwest::blocking::Clien
 /// Kill the `llama-server` at `bin` left running by a previous Purl that
 /// crashed, then remove its PID file. A PID that now belongs to some other
 /// program, including another llama.cpp server the user runs, is left alone.
+/// So is a leftover from a bundle since moved or translocated: its path no
+/// longer matches, and it is not reaped (fails safe).
 #[cfg(unix)]
 pub fn reap_stale(pid_file: &Path, bin: &Path) {
     let Some(pid) = std::fs::read_to_string(pid_file)
