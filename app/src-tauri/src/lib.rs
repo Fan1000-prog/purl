@@ -82,6 +82,9 @@ struct HotkeyPress {
     /// True between Pressed and Released — macOS key-repeat fires extra
     /// Pressed events while the hotkey is held; those must be ignored.
     is_down: bool,
+    /// When this press started a recording. `None` when the press found one
+    /// already running (started from the button or tray): its release stops
+    /// that recording, however short the press.
     pressed_at: Option<std::time::Instant>,
 }
 
@@ -605,7 +608,9 @@ fn route_hotkey(app: &AppHandle, pressed: &Shortcut, shortcut_state: ShortcutSta
 
 /// Hotkey semantics: pure push-to-talk. Press starts recording, release
 /// stops and transcribes. Releases under MIN_HOLD are discarded as
-/// accidental taps. Key-repeat Pressed events while held are ignored.
+/// accidental taps. Key-repeat Pressed events while held are ignored. A
+/// press while a recording from the button or tray is running stops it on
+/// release, tap or not.
 fn on_hotkey(app: &AppHandle, shortcut_state: ShortcutState) {
     let state = app.state::<AppState>();
     match shortcut_state {
@@ -616,7 +621,8 @@ fn on_hotkey(app: &AppHandle, shortcut_state: ShortcutState) {
                     return; // key repeat
                 }
                 press.is_down = true;
-                press.pressed_at = Some(std::time::Instant::now());
+                let recording = state.recorder.lock().unwrap().is_some();
+                press.pressed_at = (!recording).then(std::time::Instant::now);
             }
             start_dictation(app);
         }
@@ -626,23 +632,44 @@ fn on_hotkey(app: &AppHandle, shortcut_state: ShortcutState) {
                 press.is_down = false;
                 press.pressed_at.take().map(|t| t.elapsed())
             };
-            if state.recorder.lock().unwrap().is_none() {
-                return; // nothing recording (e.g. start failed)
-            }
-            if held.is_some_and(|d| d < MIN_HOLD) {
-                log_line(
-                    app,
-                    "hotkey: tap shorter than MIN_HOLD — recording discarded",
-                );
-                cancel_dictation_impl(app);
-                // The same notice as a recording too short to transcribe: a
-                // tap is the usual sign of someone pressing instead of holding.
-                set_state(app, "error");
-                report_dictation_error(app, TOO_SHORT);
-            } else {
-                stop_and_transcribe(app);
+            let recording = state.recorder.lock().unwrap().is_some();
+            match on_release(recording, held) {
+                Release::Ignore => {}
+                Release::Discard => {
+                    log_line(
+                        app,
+                        "hotkey: tap shorter than MIN_HOLD — recording discarded",
+                    );
+                    cancel_dictation_impl(app);
+                    // The same notice as a recording too short to transcribe:
+                    // a tap is the usual sign of pressing instead of holding.
+                    set_state(app, "error");
+                    report_dictation_error(app, TOO_SHORT);
+                }
+                Release::Transcribe => stop_and_transcribe(app),
             }
         }
+    }
+}
+
+/// What a hotkey release does.
+#[derive(Debug, PartialEq)]
+enum Release {
+    /// Nothing is recording (the start failed, or it was already stopped).
+    Ignore,
+    /// A tap that started its own recording: too short to be dictation.
+    Discard,
+    Transcribe,
+}
+
+/// `held` is how long the press that started this recording lasted, or
+/// `None` when the press didn't start it (it found a button or tray
+/// recording running), so the release just stops it.
+fn on_release(recording: bool, held: Option<std::time::Duration>) -> Release {
+    match held {
+        _ if !recording => Release::Ignore,
+        Some(d) if d < MIN_HOLD => Release::Discard,
+        _ => Release::Transcribe,
     }
 }
 
@@ -1969,6 +1996,32 @@ mod speech_engine_access_tests {
             Ok(()),
             "no server yet"
         );
+    }
+}
+
+#[cfg(test)]
+mod hotkey_release_tests {
+    use super::{on_release, Release, MIN_HOLD};
+    use std::time::Duration;
+
+    #[test]
+    fn a_tap_that_started_the_recording_is_discarded() {
+        let tap = MIN_HOLD - Duration::from_millis(1);
+        assert_eq!(on_release(true, Some(tap)), Release::Discard);
+        assert_eq!(on_release(true, Some(MIN_HOLD)), Release::Transcribe);
+    }
+
+    /// Started from the button or tray: the press found it running, so a
+    /// tap stops and transcribes it instead of throwing the audio away.
+    #[test]
+    fn a_tap_on_someone_elses_recording_transcribes_it() {
+        assert_eq!(on_release(true, None), Release::Transcribe);
+    }
+
+    #[test]
+    fn nothing_recording_is_ignored() {
+        assert_eq!(on_release(false, Some(Duration::ZERO)), Release::Ignore);
+        assert_eq!(on_release(false, None), Release::Ignore);
     }
 }
 
