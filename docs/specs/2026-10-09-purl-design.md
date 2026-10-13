@@ -8,7 +8,7 @@
 ## Goal
 
 Ship **Purl**: a free, open-source (MIT), local-first dictation app for macOS and
-Windows. Press a hotkey, talk, press again — the words are transcribed on-device,
+Windows. Hold a hotkey and talk, let go — the words are transcribed on-device,
 cleaned up, and pasted at the cursor. No account, no API keys, no audio leaves
 the machine.
 

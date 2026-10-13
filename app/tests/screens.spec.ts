@@ -154,6 +154,8 @@ test("Settings: toggles save on change; models can be deleted after a confirm", 
 test("Windows mode: no learning, Ctrl hotkeys", async ({ page }) => {
   await open(page, "&platform=windows&models=ready&data=demo");
   await expect(page.locator("#hotkey-label")).toHaveText("Ctrl+Shift+Space");
+  // Hold to talk: a tap is discarded, so the hint must never say "press".
+  await expect(page.locator("#home-hint")).toHaveText("Hold Ctrl+Shift+Space and talk. Let go to paste.");
   await go(page, "settings");
   await expect(page.locator("#learn-corrections")).toBeDisabled();
   await expect(page.locator("#learn-help")).toHaveText("Coming to Windows soon.");

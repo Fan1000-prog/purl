@@ -107,7 +107,7 @@ function welcome() {
       h(
         "p",
         { className: "onb-lede" },
-        `Press ${hotkey()}, talk, press it again. Purl types your words where your cursor is, tidied up. It all runs on this computer: no account, and your voice never leaves it.`,
+        `Hold ${hotkey()} and talk. Let go to paste. Purl types your words where your cursor is, tidied up. It all runs on this computer: no account, and your voice never leaves it.`,
       ),
     ],
     [button("Set up Purl", "primary", () => go("permissions"))],
@@ -223,7 +223,7 @@ function tryIt() {
   status.setAttribute("role", "status");
   frame(
     "Try it.",
-    [h("p", { className: "onb-lede" }, `Press ${hotkey()} and say something, then press it again.`), box, status],
+    [h("p", { className: "onb-lede" }, `Hold ${hotkey()} and say something. Let go to paste.`), box, status],
     [button("Back", "ghost", back), button("Finish", "primary", () => void finish())],
   );
   showWarmup();

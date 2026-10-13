@@ -50,7 +50,7 @@ async function capture(page: Page, name: string) {
 }
 
 const STATES = [
-  { name: "idle", drive: async (_: Page) => {}, pill: "idle", label: "Press ⌘ ⇧ Space" },
+  { name: "idle", drive: async (_: Page) => {}, pill: "idle", label: "Hold ⌘ ⇧ Space" },
   { name: "listening", drive: (p: Page) => emit(p, "state", "recording"), pill: "listening", label: "00:00" },
   { name: "polishing", drive: (p: Page) => emit(p, "state", "processing"), pill: "polishing", label: "Polishing" },
   { name: "sent", drive: (p: Page) => emit(p, "result", { cleaned: "hi" }), pill: "sent", label: "Sent clean" },
@@ -74,14 +74,14 @@ test("idle shows the real hotkey from settings, and follows a change", async ({ 
     (window as any).__results = { get_status: { hotkey: "Alt+Space", state: "idle" } };
   });
   await open(page);
-  await expect.poll(() => label(page)).toBe("Press ⌥ Space");
+  await expect.poll(() => label(page)).toBe("Hold ⌥ Space");
   await emit(page, "hotkey-changed", "CmdOrCtrl+Shift+D");
-  await expect.poll(() => label(page)).toBe("Press ⌘ ⇧ D");
+  await expect.poll(() => label(page)).toBe("Hold ⌘ ⇧ D");
 });
 
 test("Windows spells the hotkey out", async ({ page }) => {
   await open(page, "windows");
-  await expect.poll(() => label(page)).toBe("Press Ctrl Shift Space");
+  await expect.poll(() => label(page)).toBe("Hold Ctrl Shift Space");
 });
 
 test("mic level drives the waveform while recording", async ({ page }) => {
@@ -234,4 +234,16 @@ test("the hit rect is sent only when it changes", async ({ page }) => {
   await emit(page, "state", "processing");
   await expect.poll(() => lastHitRect(page)).toBeNull();
   expect(await sent()).toBe(before + 1);
+});
+
+test("a hit rect Rust didn't take is sent again", async ({ page }) => {
+  await page.addInitScript(() => ((window as any).__rejects = { set_overlay_hit_rect: true }));
+  await open(page);
+  await settle(page);
+  const sent = () =>
+    page.evaluate(() => (window as any).__invoked.filter((c: any) => c.cmd === "set_overlay_hit_rect").length);
+  const before = await sent();
+  await page.evaluate(() => ((window as any).__rejects = {}));
+  await emit(page, "state", "idle");
+  await expect.poll(sent).toBe(before + 1);
 });

@@ -1,5 +1,5 @@
 // Persistent voice pill: the brand dictation pill (src/brand/components),
-// driven by the app's events. Idle shows "Press <hotkey>" (click to start
+// driven by the app's events. Idle shows "Hold <hotkey>" (click to start
 // dictating); recording shows the live waveform and timer from "audio-level"
 // events, with ✕ cancel and ✓ finish-and-transcribe beside it; processing is
 // "Polishing" ("Warming up…" while the speech model loads); a finished
@@ -40,7 +40,7 @@ const control = document.getElementById("pill")!;
 const fillEl = document.getElementById("countdown-fill")!;
 const pill = mountPill(document.getElementById("capsule")!, {
   hotkey: pillHotkey(DEFAULT_HOTKEY),
-  idleLabel: "Press",
+  idleLabel: "Hold",
 });
 
 // What Rust last said, and a short-lived flash (done / error / caption) that
@@ -94,7 +94,8 @@ function showFlash(kind: Flash, ms: number) {
 // other apps' controls. Rust keeps it click-through and only lets clicks land
 // inside the bounds reported here, so the empty space around the pill never
 // swallows a click meant for the app underneath. While processing the pill
-// isn't interactive, so it reports nothing. Only a changed rect is sent.
+// isn't interactive, so it reports nothing. Only a changed rect is sent;
+// one Rust didn't take is sent again on the next report.
 let lastHitRect = "";
 function reportHitRect() {
   const r = appState === "processing" ? null : control.getBoundingClientRect();
@@ -102,7 +103,9 @@ function reportHitRect() {
   const key = JSON.stringify(rect);
   if (key === lastHitRect) return;
   lastHitRect = key;
-  void invoke("set_overlay_hit_rect", { rect });
+  invoke("set_overlay_hit_rect", { rect }).catch(() => {
+    if (lastHitRect === key) lastHitRect = "";
+  });
 }
 window.addEventListener("resize", reportHitRect);
 // The pill also changes size on its own: the capsule morphs between states,
