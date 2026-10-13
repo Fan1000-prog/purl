@@ -669,7 +669,7 @@ pub(crate) mod tests {
         // A dictation holds the server, as `complete` does mid-request.
         let in_flight = h.engine.acquire(Instant::now() + BUDGET).unwrap();
         assert!(
-            !h.engine.release_and(|| ()).is_some(),
+            h.engine.release_and(|| ()).is_none(),
             "released mid-request"
         );
         assert!(!h.dropped.load(Ordering::SeqCst));
@@ -716,7 +716,7 @@ pub(crate) mod tests {
         let h = harness(300, false, "Hello.", false);
         h.engine.warm();
         assert_eq!(h.engine.status(), EngineState::Loading);
-        assert!(!h.engine.release_and(|| ()).is_some());
+        assert!(h.engine.release_and(|| ()).is_none());
         assert_eq!(h.engine.status(), EngineState::Loading);
     }
 
